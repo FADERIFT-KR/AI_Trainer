@@ -9,10 +9,9 @@ fonttools==4.60.2
 importlib_resources==6.5.2
 kiwisolver==1.4.7
 matplotlib==3.9.4
-mediapipe==1.0.0
+mediapipe==1.0.1
 numpy==2.0.2
 opencv-contrib-python==5.0.0.93
-opencv-python==5.0.0.93
 packaging==26.3
 pandas==2.3.3
 pillow==11.3.0

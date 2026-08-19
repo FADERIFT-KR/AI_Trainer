@@ -1,0 +1,2 @@
+sample_id,annotation_json,keypoints_3d_csv,annotation_index
+capture_0001,relative/path/to/capture_0001.json,relative/path/to/capture_0001_3d.csv,

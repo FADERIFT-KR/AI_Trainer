@@ -14,3 +14,24 @@ __pycache__/
 # IDE
 .vscode/
 .idea/
+
+# AI Hub source and derived data must remain local (see AI Hub usage policy)
+data/raw/**
+!data/raw/README.md
+data/reference/**
+!data/reference/README.md
+
+# Downloaded dataset archives
+*.zip
+*.tar
+*.tar.gz
+*.7z
+*.part[0-9]*
+*.avi
+*.mp4
+
+# Generated reference artifacts outside data/reference
+*.npz
+
+# Downloaded MediaPipe model bundles
+models/*.task
