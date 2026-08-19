@@ -1,0 +1,75 @@
+{
+  "description": "actor(피험자) 단위 재분할. AI Hub 공식 TL/VL 분할은 피험자 단위가 아니므로 (VL의 모든 actor가 TL에도 존재) TL+VL을 합친 뒤 actor 단위로 새로 나눴다.",
+  "val_ratio": 0.2,
+  "seed": 42,
+  "actor_to_split": {
+    "CA01": "train",
+    "CA02": "train",
+    "CA03": "train",
+    "CA04": "train",
+    "CA05": "train",
+    "CA06": "train",
+    "CA07": "train",
+    "CA08": "val",
+    "CA09": "train",
+    "CA10": "train",
+    "CA11": "val",
+    "CB01": "train",
+    "CB02": "train",
+    "CB03": "train",
+    "CB04": "train",
+    "CB05": "train",
+    "CB06": "val",
+    "CB07": "train",
+    "CB08": "train",
+    "CB09": "train",
+    "CB10": "train",
+    "CB11": "train",
+    "CB12": "train",
+    "CB13": "val",
+    "CB14": "train",
+    "CB15": "train",
+    "CB16": "train",
+    "CB17": "train",
+    "CB18": "train",
+    "CB19": "train",
+    "CB20": "val",
+    "CB21": "val",
+    "CB22": "train",
+    "CB23": "train",
+    "CB24": "train",
+    "CB25": "val",
+    "CB26": "train",
+    "CI01": "train",
+    "CI02": "train",
+    "CI03": "train",
+    "CI04": "val",
+    "CI05": "train",
+    "CI06": "train",
+    "CI07": "val",
+    "CI08": "train",
+    "CI09": "train"
+  },
+  "summary": {
+    "n_actors": {
+      "train": 37,
+      "val": 9
+    },
+    "n_sequences": {
+      "train": {
+        "정상": 129,
+        "발뒤꿈치오류": 70,
+        "엉덩이하방오류": 66,
+        "고관절오류": 66,
+        "TOTAL": 331
+      },
+      "val": {
+        "정상": 27,
+        "발뒤꿈치오류": 16,
+        "엉덩이하방오류": 16,
+        "고관절오류": 14,
+        "TOTAL": 73
+      }
+    }
+  }
+}

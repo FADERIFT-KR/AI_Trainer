@@ -1,0 +1,49 @@
+{
+  "description": "Weighted Phase-aware DTW 설정. Validation 성능을 보고 조정하는 것을 전제로 한 초기 설계값(고정 최종값 아님).",
+  "default_profile": "E_full_uniform",
+  "default_profile_note": "Offline 평가 결과 uniform(E, acc 0.726)이 class_overrides 적용 custom(D, acc 0.685)보다 높아 당분간 기본값으로 채택. D는 폐기하지 않고 초기 가설 configuration으로 보존, 전체 파이프라인 완성 후 재검토.",
+  "features": {
+    "joint_coords_3d": {"dim": 54, "unit": "leg_length 단위 (Hip-center+Scale+Orientation 정규화 완료)", "metric": "euclidean", "desc": "18노드 x,y,z"},
+    "knee_flexion_angle": {"dim": 2, "unit": "deg/180 정규화", "metric": "euclidean", "desc": "L,R 무릎 굴곡각"},
+    "hip_flexion_angle": {"dim": 2, "unit": "deg/180 정규화", "metric": "euclidean", "desc": "L,R 고관절 굴곡각 (Neck-Hip-Knee)"},
+    "ankle_angle": {"dim": 2, "unit": "deg/180 정규화", "metric": "euclidean", "desc": "L,R 발목각 (Knee-Ankle-BigToe)"},
+    "torso_inclination": {"dim": 1, "unit": "deg/180 정규화", "metric": "euclidean", "desc": "Neck-Hip 벡터와 정렬 기준 수직축 사이 각"},
+    "bone_direction_vectors": {"dim": 9, "unit": "단위벡터(무차원)", "metric": "cosine", "desc": "허벅지/정강이/몸통 평균 방향벡터 3개 x 3dim"},
+    "joint_velocity": {"dim": 54, "unit": "leg_length/frame", "metric": "euclidean", "desc": "joint_coords_3d의 프레임간 차분"},
+    "pelvis_trajectory": {"dim": 2, "unit": "leg_length 단위", "metric": "euclidean", "desc": "pelvis_height, pelvis_velocity"},
+    "heel_height": {"dim": 2, "unit": "leg_length 단위", "metric": "euclidean", "desc": "L,R Heel 수직축 좌표"},
+    "knee_toe_alignment": {"dim": 2, "unit": "leg_length 단위", "metric": "euclidean", "desc": "L,R Knee-BigToe 가로축(lateral) 편차"},
+    "left_right_asymmetry": {"dim": 4, "unit": "deg/180 또는 leg_length 정규화 절대차", "metric": "euclidean", "desc": "|knee_L-knee_R|,|hip_L-hip_R|,|heel_L-heel_R|,|ankle_L-ankle_R|"}
+  },
+  "phase_weights": {"준비": 0.5, "하강": 1.0, "최저점": 1.5, "상승": 1.0, "종료": 0.5},
+  "base_weights": {
+    "joint_coords_3d": 1.0, "knee_flexion_angle": 1.0, "hip_flexion_angle": 1.0,
+    "ankle_angle": 0.5, "torso_inclination": 1.0, "bone_direction_vectors": 0.5,
+    "joint_velocity": 0.5, "pelvis_trajectory": 1.0, "heel_height": 0.5,
+    "knee_toe_alignment": 0.5, "left_right_asymmetry": 0.5
+  },
+  "uniform_weights": {
+    "joint_coords_3d": 1.0, "knee_flexion_angle": 1.0, "hip_flexion_angle": 1.0,
+    "ankle_angle": 1.0, "torso_inclination": 1.0, "bone_direction_vectors": 1.0,
+    "joint_velocity": 1.0, "pelvis_trajectory": 1.0, "heel_height": 1.0,
+    "knee_toe_alignment": 1.0, "left_right_asymmetry": 1.0
+  },
+  "class_overrides": {
+    "발뒤꿈치오류": {"heel_height": 2.5, "ankle_angle": 2.0, "knee_toe_alignment": 1.0},
+    "엉덩이하방오류": {"pelvis_trajectory": 2.5, "knee_flexion_angle": 1.5, "hip_flexion_angle": 1.5},
+    "고관절오류": {"torso_inclination": 2.5, "hip_flexion_angle": 2.0, "pelvis_trajectory": 1.0}
+  },
+  "feedback_focus_features": {
+    "발뒤꿈치오류": ["heel_height", "ankle_angle"],
+    "엉덩이하방오류": ["pelvis_trajectory", "knee_flexion_angle"],
+    "고관절오류": ["hip_flexion_angle", "torso_inclination", "pelvis_trajectory"]
+  },
+  "ablation_configs": {
+    "A_coords_only": {"joint_coords_3d": 1.0},
+    "B_angles_only": {"knee_flexion_angle": 1.0, "hip_flexion_angle": 1.0, "ankle_angle": 1.0},
+    "C_coords_plus_angles": {"joint_coords_3d": 1.0, "knee_flexion_angle": 1.0, "hip_flexion_angle": 1.0, "ankle_angle": 1.0},
+    "D_full_weighted": "base_weights + class_overrides",
+    "E_full_uniform": "uniform_weights (no class_overrides)"
+  },
+  "usage_note": "base_weights에 class_overrides를 덮어써서(D) 클래스별 reference 비교 시 사용. 미기재 feature는 weight=0으로 처리(ablation A/B/C)."
+}
