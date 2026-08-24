@@ -96,7 +96,20 @@ class ReferenceTrack:
         phase = STATE_TO_PHASE.get(live_state, "준비") if live_state else "준비"
         if phase != self._current_phase:
             self._current_phase = phase
-            self._cursor = self.bounds.get(phase, (0, 1))[0]
+            s, e = self.bounds.get(phase, (0, 1))
+            if phase != "준비" and live_pelvis_height is not None and e > s:
+                # phase가 바뀌는 "이 한 틱"만 예외적으로 새 구간 전체에서 즉시 맞는 위치로
+                # 점프한다. 하강처럼 높이가 빠르게 변하는 구간은, phase 전환이 감지될
+                # 즈음(디바운스 지연) 사용자가 이미 구간 초반보다 훨씬 내려가 있는 경우가
+                # 많아서 — 항상 구간 첫 프레임에서 시작해 매 틱 최대 몇 프레임씩만
+                # 전진하면 그 차이를 다 못 따라잡고 계속 뒤처진다. 전환 시점 1회만
+                # 무제한 탐색으로 스냅하고, 같은 phase가 유지되는 동안(아래 elif)은 기존처럼
+                # 부드럽게(역행 없이, 조금씩만) 진행한다.
+                seg = self.pelvis_height[s:e]
+                offset = int(np.argmin(np.abs(seg - live_pelvis_height)))
+                self._cursor = s + offset
+            else:
+                self._cursor = s
             self._frac_accum = 0.0
             self._smoothed_height = live_pelvis_height  # 새 phase 시작 시 EMA 리셋
         elif phase != "준비":
