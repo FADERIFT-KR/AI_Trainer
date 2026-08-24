@@ -1,8 +1,11 @@
 """운동 선택 화면 + 좌(웹캠)/우(정상 레퍼런스) 비교 화면."""
 from __future__ import annotations
 
+import time
+
 import numpy as np
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal
+from PyQt5.QtGui import QResizeEvent
 from PyQt5.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
@@ -24,6 +27,11 @@ from .reference_track import ReferenceTrack, list_available
 REF_PANEL_W, REF_PANEL_H = 480, 480
 
 PHASE_LABEL_KR = {"prep": "준비", "descend": "하강", "bottom": "최저점", "ascend": "상승", None: "-"}
+
+# 화각이 이만큼(초) 연속으로 안정적으로 좋아야 3-2-1 카운트다운을 자동 시작한다.
+# 순간적인 흔들림으로 바로 시작해버리는 것을 막기 위한 디바운스.
+FRAMING_STABLE_SECONDS = 1.0
+COUNTDOWN_START_VALUE = 3
 
 
 class SelectionScreen(QWidget):
@@ -121,6 +129,30 @@ class CompareScreen(QWidget):
             "QPushButton { padding: 6px 12px; }"
         )
 
+        # 화면 중앙에 뜨는 3-2-1 카운트다운 (일반 레이아웃에 안 넣고 위에 겹쳐 그림)
+        self.countdown_label = QLabel("", self)
+        self.countdown_label.setAlignment(Qt.AlignCenter)
+        self.countdown_label.setStyleSheet(
+            "background: rgba(10,14,20,215); color: #ffffff; font-size: 150px; "
+            "font-weight: 800; border-radius: 24px; border: 2px solid #4c8bff;"
+        )
+        self.countdown_label.hide()
+
+        self._countdown_timer = QTimer(self)
+        self._countdown_timer.setInterval(1000)
+        self._countdown_timer.timeout.connect(self._tick_countdown)
+        self._countdown_value = 0
+        self._countdown_started = False
+        self._framing_ok_since: float | None = None
+
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 (Qt override)
+        super().resizeEvent(event)
+        self._position_countdown_label()
+
+    def _position_countdown_label(self) -> None:
+        w, h = 340, 240
+        self.countdown_label.setGeometry((self.width() - w) // 2, (self.height() - h) // 2, w, h)
+
     @staticmethod
     def _panel(title: str, image: ImagePanel) -> QGroupBox:
         group = QGroupBox(title)
@@ -133,6 +165,12 @@ class CompareScreen(QWidget):
         self.ref_track = ReferenceTrack(class_label=class_label, medoid_rank=medoid_rank)
         self._ref_tf = fit_transform(self.ref_track.coords[:, :, [0, 1]], REF_PANEL_W, REF_PANEL_H, flip_y=True)
 
+        self._countdown_timer.stop()
+        self._countdown_started = False
+        self._framing_ok_since = None
+        self.countdown_label.hide()
+        self.result_label.setText("")
+
         self.worker = SquatPipelineWorker(config=CameraConfig())
         self.worker.status_ready.connect(self._on_status)
         self.worker.status_changed.connect(self.status_label.setText)
@@ -140,10 +178,61 @@ class CompareScreen(QWidget):
         self.worker.start()
 
     def stop(self) -> None:
+        self._countdown_timer.stop()
+        self.countdown_label.hide()
         if self.worker is not None and self.worker.isRunning():
             self.worker.requestInterruption()
             self.worker.wait(5000)
         self.worker = None
+
+    # --- 3-2-1 카운트다운: 화각이 안정되면 자동 시작, 세션(캘리브레이션/phase/DTW)은
+    # "GO" 순간부터 시작해서 시작 시점의 사용자 판단(휴먼에러)에 기대지 않게 한다. ---
+
+    def _begin_countdown(self) -> None:
+        if self._countdown_started:
+            return
+        self._countdown_started = True
+        self._countdown_value = COUNTDOWN_START_VALUE
+        self._show_countdown(str(self._countdown_value))
+        self._countdown_timer.start()
+
+    def _cancel_countdown(self) -> None:
+        self._countdown_timer.stop()
+        self._countdown_started = False
+        self._framing_ok_since = None
+        self.countdown_label.hide()
+
+    def _tick_countdown(self) -> None:
+        self._countdown_value -= 1
+        if self._countdown_value > 0:
+            self._show_countdown(str(self._countdown_value))
+        elif self._countdown_value == 0:
+            self._show_countdown("시작!")
+        else:
+            self._countdown_timer.stop()
+            self.countdown_label.hide()
+            if self.worker is not None:
+                self.worker.session_active = True  # 이 순간부터 캘리브레이션/phase/DTW 시작
+
+    def _show_countdown(self, text: str) -> None:
+        self._position_countdown_label()
+        self.countdown_label.setText(text)
+        self.countdown_label.show()
+        self.countdown_label.raise_()
+
+    def _update_countdown(self, status: PipelineStatus) -> None:
+        if self.worker is not None and self.worker.session_active:
+            return  # 이미 시작됨, 더 이상 카운트다운 로직 필요 없음
+        now = time.monotonic()
+        if status.framing_ok:
+            if self._framing_ok_since is None:
+                self._framing_ok_since = now
+            elif not self._countdown_started and now - self._framing_ok_since >= FRAMING_STABLE_SECONDS:
+                self._begin_countdown()
+        else:
+            self._framing_ok_since = None
+            if self._countdown_started:
+                self._cancel_countdown()
 
     _JUDGE_STYLES = {
         "neutral": "background: #232a38; color: #cfd6e2;",
@@ -178,6 +267,8 @@ class CompareScreen(QWidget):
         else:
             self.status_label.setText("○ 전신 자세를 찾는 중…")
             self.status_label.setStyleSheet("color: #f2bd61; font-weight: 600;")
+
+        self._update_countdown(status)
 
         # 우측 패널: phase에 맞춰 레퍼런스 진행
         if self.ref_track is not None:

@@ -61,6 +61,11 @@ class SquatPipelineWorker(QThread):
         super().__init__(parent)
         self.model_path = Path(model_path).resolve()
         self.config = config or CameraConfig()
+        # 3-2-1 카운트다운이 끝나기 전까지는 False로 두어 캘리브레이션/phase/DTW가 시작되지
+        # 않게 한다. 메인(UI) 스레드에서 True로 바꿔주면 그 다음 프레임부터 세션이 시작된다.
+        # 단순 bool 속성 읽기/쓰기라 CPython GIL 하에서 스레드 간 공유에 안전하다
+        # (QThread.isInterruptionRequested()와 같은 패턴).
+        self.session_active = False
 
     def run(self) -> None:
         capture = None
@@ -148,9 +153,11 @@ class SquatPipelineWorker(QThread):
                     if framing.body_box is not None:
                         cv2.rectangle(video_bgr, (framing.body_box[0], framing.body_box[1]), (framing.body_box[2], framing.body_box[3]), (0, 200, 255), 1)
 
-                    if framing_ok:
-                        # 화각/거리/정면 여부가 학습 데이터(AI Hub camera1)와 맞을 때만 phase/DTW 파이프라인 진행.
-                        # 그렇지 않으면 잘못된 프레임이 session의 phase 상태기계에 섞여 들어가지 않도록 건너뛴다.
+                    if framing_ok and self.session_active:
+                        # 화각/거리/정면 여부가 학습 데이터(AI Hub camera1)와 맞고, 3-2-1 카운트다운이
+                        # 끝나 세션이 명시적으로 시작된 뒤에만 phase/DTW 파이프라인을 진행한다.
+                        # 그렇지 않으면 잘못된 프레임이나 아직 자리를 잡는 중인 프레임이 session의
+                        # 캘리브레이션/phase 상태기계에 섞여 들어가지 않도록 건너뛴다.
                         common2d, frozen_mask, mean_conf = bridge.update(observation.image_landmarks, w, h)
                         n_frozen = int(frozen_mask.sum())
                         status = session.push_frame(common2d)
