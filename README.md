@@ -31,18 +31,11 @@ python scripts/build_reference_db.py
 python scripts/run_offline_dtw_eval.py
 python scripts/test_online_dtw.py
 
-# Headless 실시간 파이프라인 (Webcam -> Pose -> Lifting -> Online DTW, GUI 없음)
-python scripts/run_webcam_pipeline.py --source webcam:0 --viz-out output/webcam_check.mp4
-python scripts/run_webcam_pipeline.py --source video:/path/to/clip.mp4
+# CSV/JSON 기반 정상(또는 오류) 스쿼트 스켈레톤 재생 — 웹캠/MediaPipe 미사용
+python scripts/play_reference_skeleton.py
 ```
 
-> `run_webcam_pipeline.py`는 최초 실행 시 `models/pose_landmarker_lite.task`(MediaPipe Pose 모델,
-> ~5.8MB)가 필요합니다. 없으면 아래 명령으로 받으세요:
-> ```bash
-> mkdir -p models
-> curl -L -o models/pose_landmarker_lite.task \
->   "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task"
-> ```
-> `--source webcam:0`은 실행하는 터미널 앱에 macOS 카메라 권한이 있어야 합니다
-> (시스템 설정 > 개인정보 보호 및 보안 > 카메라). 권한 문제 없이 먼저 테스트하려면
-> `--source video:<영상 파일 경로>`를 사용하세요.
+> ⚠️ 웹캠으로 실제 사용자 자세를 촬영/추적하는 기능(2D Pose Estimation)은 이 브랜치(`feature/dtw-pipeline`)에는
+> 없습니다. 해당 기능은 팀원(ms.choe) 브랜치의 `live_pose` 모듈이 담당하며, 두 브랜치를 합친
+> `feature/game-ui` 브랜치에서 최종 UI로 통합됩니다. 이 브랜치는 **AI Hub CSV/JSON 데이터 처리,
+> 2D→3D Lifting, 정규화, Phase Segmentation, Reference DB, Weighted DTW 비교/채점 엔진**을 담당합니다.
