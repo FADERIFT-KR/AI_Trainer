@@ -22,7 +22,7 @@ from ai_trainer.live_pose.worker import CameraConfig
 from ai_trainer.render import draw_skeleton_panel, fit_transform
 
 from .pipeline_worker import PipelineStatus, SquatPipelineWorker
-from .reference_track import ReferenceTrack, list_available
+from .reference_track import REFERENCE_FPS, ReferenceTrack, list_available
 
 REF_PANEL_W, REF_PANEL_H = 480, 480
 
@@ -145,6 +145,12 @@ class CompareScreen(QWidget):
         self._countdown_started = False
         self._framing_ok_since: float | None = None
 
+        # 우측 레퍼런스 패널 전용 타이머 — 카메라/추론 속도와 완전히 무관하게 항상
+        # REFERENCE_FPS(원본 AI Hub 캡처 속도, 30fps)로만 흘러간다. 이게 "동작의 기준 속도"다.
+        self._ref_playback_timer = QTimer(self)
+        self._ref_playback_timer.setInterval(int(1000 / REFERENCE_FPS))
+        self._ref_playback_timer.timeout.connect(self._advance_reference_panel)
+
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 (Qt override)
         super().resizeEvent(event)
         self._position_countdown_label()
@@ -181,8 +187,12 @@ class CompareScreen(QWidget):
         self.worker.fatal_error.connect(self._on_error)
         self.worker.start()
 
+        # 레퍼런스는 사용자 상태와 무관하게 화면에 들어오는 즉시 정상 배속으로 계속 재생.
+        self._ref_playback_timer.start()
+
     def stop(self) -> None:
         self._countdown_timer.stop()
+        self._ref_playback_timer.stop()
         self.countdown_label.hide()
         if self.worker is not None and self.worker.isRunning():
             self.worker.requestInterruption()
@@ -223,6 +233,20 @@ class CompareScreen(QWidget):
         self.countdown_label.setText(text)
         self.countdown_label.show()
         self.countdown_label.raise_()
+
+    def _advance_reference_panel(self) -> None:
+        """REFERENCE_FPS 타이머에서만 호출됨 — 사용자 상태를 전혀 참조하지 않고
+        정상 배속으로 한 프레임씩 진행(끝나면 반복)한다."""
+        if self.ref_track is None:
+            return
+        ref_xy = self.ref_track.step()
+        canvas = np.zeros((REF_PANEL_H, REF_PANEL_W, 3), dtype=np.uint8)
+        draw_skeleton_panel(
+            canvas, (0, 0), REF_PANEL_W, REF_PANEL_H, self._ref_tf(ref_xy),
+            f"정상 레퍼런스 · 기준 속도 ({self.ref_track.phase_at()})", None,
+            COMMON_BONE_INDEX_PAIRS, COMMON_BONE_COLORS_BGR,
+        )
+        self.ref_panel.set_bgr_frame(canvas)
 
     def _update_countdown(self, status: PipelineStatus) -> None:
         if self.worker is not None and self.worker.session_active:
@@ -274,20 +298,8 @@ class CompareScreen(QWidget):
 
         self._update_countdown(status)
 
-        # 우측 패널: phase에 맞춰 레퍼런스 진행
-        if self.ref_track is not None:
-            ref_xy = self.ref_track.advance(
-                status.phase if status.pose_found else None,
-                live_pelvis_height=status.pelvis_height,
-                live_fps=status.fps,
-            )
-            canvas = np.zeros((REF_PANEL_H, REF_PANEL_W, 3), dtype=np.uint8)
-            draw_skeleton_panel(
-                canvas, (0, 0), REF_PANEL_W, REF_PANEL_H, self._ref_tf(ref_xy),
-                f"정상 레퍼런스 ({self.ref_track.current_phase})", None,
-                COMMON_BONE_INDEX_PAIRS, COMMON_BONE_COLORS_BGR,
-            )
-            self.ref_panel.set_bgr_frame(canvas)
+        # 우측 레퍼런스 패널은 이제 여기서 갱신하지 않는다 — _advance_reference_panel()이
+        # 독립된 REFERENCE_FPS 타이머로 갱신한다(사용자 상태와 무관하게 정상 배속 유지).
 
         # 위치/화각/정면 여부가 학습 데이터(camera1) 조건에 안 맞으면 DTW 판정 대신
         # 위치 안내부터 보여준다 — 잘못된 위치에서 나온 "확인 필요"는 의미가 없다.
