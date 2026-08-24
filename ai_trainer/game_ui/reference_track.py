@@ -7,6 +7,12 @@ Reference DB(이 브랜치가 AI Hub CSV/JSON으로 구축한 것)에서 한 med
 시작으로 이동, 같은 phase가 유지되면 진행(구간 끝에서는 유지)".
 DTW 정렬 기반의 정밀한 진행률 동기화는 다음 단계 개선 대상이다(README 참고).
 
+**준비(prep) 상태는 예외적으로 진행시키지 않고 첫 프레임(=대기 자세)에 고정한다.**
+사용자가 가만히 서 있어도 관절 추정의 미세한 흔들림 때문에 phase가 계속
+재확인되며(같은 '준비'로 유지) 커서가 계속 흘러가 "레퍼런스가 혼자 계속 움직이는"
+것처럼 보이는 문제가 있었다 — 실제 하강이 감지되기 전까지는 준비 자세 한 프레임만
+정지 화면처럼 보여준다.
+
 레퍼런스 데이터(AI Hub)는 30fps로 캡처되었다(annotation.json의 start_time/end_time
 대비 start_frame/end_frame 역산으로 검증 완료). 웹캠도 `CameraConfig.requested_fps=30`
 으로 30fps를 목표로 하지만, MediaPipe 추론 부하 등으로 실제 처리 속도가 30fps에 못
@@ -68,7 +74,8 @@ class ReferenceTrack:
             self._current_phase = phase
             self._cursor = self.bounds.get(phase, (0, 1))[0]
             self._frac_accum = 0.0
-        else:
+        elif phase != "준비":
+            # 실제 동작 phase(하강/최저점/상승)일 때만 진행. 준비 상태는 고정.
             s, e = self.bounds.get(phase, (0, self.coords.shape[0]))
             step = (live_fps / REFERENCE_FPS) if live_fps and live_fps > 0 else 1.0
             self._frac_accum += step
