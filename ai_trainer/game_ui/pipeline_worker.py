@@ -47,6 +47,7 @@ class PipelineStatus:
     framing_ok: bool
     framing_message: str
     phase: str | None
+    pelvis_height: float | None  # 정규화(leg_length 단위) pelvis 높이 -> 레퍼런스 동기화에 사용
     rep_count: int
     partial_distance: dict | None  # {"phase":..., "distance_by_class": {...}}
     completed_rep: object | None  # ai_trainer.online_dtw.RepResult
@@ -134,6 +135,7 @@ class SquatPipelineWorker(QThread):
                 phase = None
                 partial = None
                 completed = None
+                pelvis_height = None
                 mean_conf = 0.0
                 n_frozen = 0
                 pose_found = observation is not None
@@ -164,6 +166,7 @@ class SquatPipelineWorker(QThread):
                         if status is not None and status.get("status") == "ok":
                             phase = status["phase"]
                             partial = status["partial_distance"]
+                            pelvis_height = status["pelvis_height"]
                             if status["event"] == "rep_end":
                                 completed = status["completed_rep"]
 
@@ -188,6 +191,7 @@ class SquatPipelineWorker(QThread):
                         framing_ok=framing_ok,
                         framing_message=framing_message,
                         phase=phase,
+                        pelvis_height=pelvis_height,
                         rep_count=len(session.completed_reps),
                         partial_distance=partial,
                         completed_rep=completed,
