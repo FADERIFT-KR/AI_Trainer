@@ -26,6 +26,7 @@ from ai_trainer.lifting_model import TemporalLiftingNet
 from ai_trainer.online_dtw import OnlineSquatSession
 from ai_trainer.reference_db_io import load_reference_db
 
+from .error_explain import annotate_error
 from .framing_check import check_framing, guide_box as compute_guide_box
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -158,6 +159,14 @@ class SquatPipelineWorker(QThread):
                             partial = status["partial_distance"]
                             if status["event"] == "rep_end":
                                 completed = status["completed_rep"]
+
+                            if partial is not None:
+                                dvals = partial["distance_by_class"]
+                                best_class = min(dvals, key=dvals.get)
+                                if best_class != "정상":
+                                    # 어떤 오류유형에 가장 가까운지에 따라 관련 관절 옆에 말풍선 설명을 붙인다
+                                    # (예: 고관절오류 -> 고관절/상체 근처, claude.md 9장 오류유형별 feature 참고).
+                                    annotate_error(video_bgr, common2d, best_class)
                 else:
                     video_bgr = display_bgr.copy()
                     cv2.rectangle(video_bgr, (gbox[0], gbox[1]), (gbox[2], gbox[3]), (60, 60, 240), 2)
