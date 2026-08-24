@@ -145,6 +145,20 @@ class CompareScreen(QWidget):
             self.worker.wait(5000)
         self.worker = None
 
+    _JUDGE_STYLES = {
+        "neutral": "background: #232a38; color: #cfd6e2;",
+        "positioning": "background: #4d3d1d; color: #f2bd61;",
+        "good": "background: #1d4d2b; color: #72df8d;",
+        "bad": "background: #4d1d1d; color: #ff7b7b;",
+    }
+
+    def _set_judge(self, text: str, kind: str) -> None:
+        self.judge_label.setText(text)
+        self.judge_label.setStyleSheet(
+            "font-size: 20px; font-weight: 700; padding: 10px; border-radius: 8px; "
+            + self._JUDGE_STYLES[kind]
+        )
+
     def _on_back(self) -> None:
         self.stop()
         self.back_requested.emit()
@@ -154,10 +168,13 @@ class CompareScreen(QWidget):
         self.fps_label.setText(f"{status.fps:4.1f} FPS")
         self.rep_label.setText(f"REP {status.rep_count}")
 
-        if status.pose_found:
+        if status.pose_found and status.framing_ok:
             conf_flag = f" [인식불안 {status.n_frozen}/18]" if status.n_frozen >= 6 else ""
             self.status_label.setText(f"● 자세 감지됨 (phase: {PHASE_LABEL_KR.get(status.phase, '-')}){conf_flag}")
             self.status_label.setStyleSheet("color: #72df8d; font-weight: 600;")
+        elif status.pose_found:
+            self.status_label.setText(f"⚠ 위치 조정 필요")
+            self.status_label.setStyleSheet("color: #f2bd61; font-weight: 600;")
         else:
             self.status_label.setText("○ 전신 자세를 찾는 중…")
             self.status_label.setStyleSheet("color: #f2bd61; font-weight: 600;")
@@ -173,21 +190,23 @@ class CompareScreen(QWidget):
             )
             self.ref_panel.set_bgr_frame(canvas)
 
-        # 실시간 정오 판정(간이): partial distance margin으로 색상 표시
-        if status.partial_distance:
+        # 위치/화각/정면 여부가 학습 데이터(camera1) 조건에 안 맞으면 DTW 판정 대신
+        # 위치 안내부터 보여준다 — 잘못된 위치에서 나온 "확인 필요"는 의미가 없다.
+        if not status.framing_ok:
+            self._set_judge(status.framing_message, "positioning")
+        elif status.partial_distance:
             dvals = status.partial_distance["distance_by_class"]
             best_class = min(dvals, key=dvals.get)
             sorted_d = sorted(dvals.values())
             margin = sorted_d[1] - sorted_d[0] if len(sorted_d) >= 2 else 0.0
             if best_class == "정상" and margin > 0.05:
-                self.judge_label.setText("자세 양호")
-                self.judge_label.setStyleSheet(self.judge_label.styleSheet().replace("#232a38", "#1d4d2b").replace("#cfd6e2", "#72df8d"))
+                self._set_judge("자세 양호", "good")
             elif best_class == "정상":
-                self.judge_label.setText("확인 필요")
-                self.judge_label.setStyleSheet(self.judge_label.styleSheet())
+                self._set_judge("확인 필요", "neutral")
             else:
-                self.judge_label.setText(f"자세 확인 필요 ({best_class})")
-                self.judge_label.setStyleSheet(self.judge_label.styleSheet().replace("#1d4d2b", "#4d1d1d").replace("#72df8d", "#ff7b7b"))
+                self._set_judge(f"자세 확인 필요 ({best_class})", "bad")
+        else:
+            self._set_judge(status.framing_message, "neutral")
 
         if status.completed_rep is not None:
             r = status.completed_rep

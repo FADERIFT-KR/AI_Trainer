@@ -26,6 +26,8 @@ from ai_trainer.lifting_model import TemporalLiftingNet
 from ai_trainer.online_dtw import OnlineSquatSession
 from ai_trainer.reference_db_io import load_reference_db
 
+from .framing_check import check_framing, guide_box as compute_guide_box
+
 ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_MODEL_PATH = ROOT / "models" / "pose_landmarker_lite.task"
 LIFTING_CKPT = ROOT / "output" / "lifting_baseline" / "model_best.pt"
@@ -41,6 +43,8 @@ class PipelineStatus:
     pose_found: bool
     mean_confidence: float
     n_frozen: int
+    framing_ok: bool
+    framing_message: str
     phase: str | None
     rep_count: int
     partial_distance: dict | None  # {"phase":..., "distance_by_class": {...}}
@@ -127,21 +131,36 @@ class SquatPipelineWorker(QThread):
                 mean_conf = 0.0
                 n_frozen = 0
                 pose_found = observation is not None
+                framing_ok = False
+                framing_message = "카메라 앞에 서주세요"
+                h, w = display_bgr.shape[:2]
+                gbox = compute_guide_box(w, h)
 
                 if pose_found:
                     video_bgr = draw_2d_pose(display_bgr, observation.image_landmarks)
-                    h, w = display_bgr.shape[:2]
-                    common2d, frozen_mask, mean_conf = bridge.update(observation.image_landmarks, w, h)
-                    n_frozen = int(frozen_mask.sum())
+                    framing = check_framing(observation.image_landmarks, w, h)
+                    framing_ok = framing.ok
+                    framing_message = framing.message
 
-                    status = session.push_frame(common2d)
-                    if status is not None and status.get("status") == "ok":
-                        phase = status["phase"]
-                        partial = status["partial_distance"]
-                        if status["event"] == "rep_end":
-                            completed = status["completed_rep"]
+                    box_color = (90, 220, 90) if framing.ok else (60, 60, 240)
+                    cv2.rectangle(video_bgr, (gbox[0], gbox[1]), (gbox[2], gbox[3]), box_color, 2)
+                    if framing.body_box is not None:
+                        cv2.rectangle(video_bgr, (framing.body_box[0], framing.body_box[1]), (framing.body_box[2], framing.body_box[3]), (0, 200, 255), 1)
+
+                    if framing_ok:
+                        # 화각/거리/정면 여부가 학습 데이터(AI Hub camera1)와 맞을 때만 phase/DTW 파이프라인 진행.
+                        # 그렇지 않으면 잘못된 프레임이 session의 phase 상태기계에 섞여 들어가지 않도록 건너뛴다.
+                        common2d, frozen_mask, mean_conf = bridge.update(observation.image_landmarks, w, h)
+                        n_frozen = int(frozen_mask.sum())
+                        status = session.push_frame(common2d)
+                        if status is not None and status.get("status") == "ok":
+                            phase = status["phase"]
+                            partial = status["partial_distance"]
+                            if status["event"] == "rep_end":
+                                completed = status["completed_rep"]
                 else:
-                    video_bgr = display_bgr
+                    video_bgr = display_bgr.copy()
+                    cv2.rectangle(video_bgr, (gbox[0], gbox[1]), (gbox[2], gbox[3]), (60, 60, 240), 2)
 
                 self.status_ready.emit(
                     PipelineStatus(
@@ -150,6 +169,8 @@ class SquatPipelineWorker(QThread):
                         pose_found=pose_found,
                         mean_confidence=mean_conf,
                         n_frozen=n_frozen,
+                        framing_ok=framing_ok,
+                        framing_message=framing_message,
                         phase=phase,
                         rep_count=len(session.completed_reps),
                         partial_distance=partial,
