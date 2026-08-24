@@ -8,13 +8,12 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 
-# 스켈레톤 확인 영상 등 생성물 (용량이 크고 재생성 가능하므로 커밋하지 않음)
+# 스켈레톤 확인 영상, Reference DB, 학습 checkpoint 등 생성물 (용량이 크고 재생성 가능)
 output/
 
-# 다운로드받는 MediaPipe 모델 파일 (scripts/run_webcam_pipeline.py가 자동 참조하는 경로;
-# 필요 시 https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/
-# float16/latest/pose_landmarker_lite.task 에서 재다운로드)
-models/
+# 다운로드받는 MediaPipe 모델 파일
+# (재다운로드: python scripts/download_pose_model.py)
+models/*.task
 
 # OS
 .DS_Store
@@ -22,3 +21,12 @@ models/
 # IDE
 .vscode/
 .idea/
+
+# 다운로드된 데이터셋 압축 파일 / 녹화 영상
+*.zip
+*.tar
+*.tar.gz
+*.7z
+*.part[0-9]*
+*.avi
+*.mp4
