@@ -162,7 +162,11 @@ class CompareScreen(QWidget):
         return group
 
     def start(self, class_label: str, medoid_rank: int) -> None:
-        self.ref_track = ReferenceTrack(class_label=class_label, medoid_rank=medoid_rank)
+        # 화면에 보여주는 "정답" 레퍼런스는 정확도가 더 중요하므로 Ground Truth 계층 사용
+        # (AI Hub 3d_points.csv = 카메라 8대 삼각측량 3D, camera1 단일뷰 lifting 근사가 아님).
+        # DTW 점수 계산(session_active 파이프라인)은 별개로 계속 Operational 계층을 사용한다
+        # (실사용자 입력도 lifting을 거치므로 그쪽과 도메인을 맞추는 게 더 정확했음, 기존 검증 결과).
+        self.ref_track = ReferenceTrack(class_label=class_label, medoid_rank=medoid_rank, tier="ground_truth")
         self._ref_tf = fit_transform(self.ref_track.coords[:, :, [0, 1]], REF_PANEL_W, REF_PANEL_H, flip_y=True)
 
         self._countdown_timer.stop()
