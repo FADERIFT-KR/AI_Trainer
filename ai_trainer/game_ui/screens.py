@@ -181,7 +181,7 @@ class CompareScreen(QWidget):
 
         # 우측 패널: phase에 맞춰 레퍼런스 진행
         if self.ref_track is not None:
-            ref_xy = self.ref_track.advance(status.phase if status.pose_found else None)
+            ref_xy = self.ref_track.advance(status.phase if status.pose_found else None, live_fps=status.fps)
             canvas = np.zeros((REF_PANEL_H, REF_PANEL_W, 3), dtype=np.uint8)
             draw_skeleton_panel(
                 canvas, (0, 0), REF_PANEL_W, REF_PANEL_H, self._ref_tf(ref_xy),

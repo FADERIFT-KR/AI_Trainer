@@ -17,6 +17,15 @@ Lifting 모델은 T=9 대칭 윈도우([c-4, c+4])로 학습되었으므로, 프
   고정 적용한다 — 웹캠이 세션 중 움직이지 않는다는 실사용 가정과 일치하며,
   이 역시 미래 데이터를 쓰지 않는다(초반 캘리브레이션 구간 이후 프레임에는
   과거 계산된 값만 사용).
+
+fps 가정
+--------
+`vel_eps`/`debounce_n`/`calib_frames`/`_causal_velocity`의 `win` 등은 전부 "프레임 수"
+단위 임계값이며, AI Hub 레퍼런스 데이터가 30fps로 캡처되었다는 사실(claude.md 7장,
+annotation.json의 start_time/end_time 대비 start_frame/end_frame 역산으로 검증)에
+맞춰 조정되었다. 웹캠도 `CameraConfig.requested_fps=30`으로 30fps를 목표로 하므로
+프레임 수 기반 임계값이 그대로 맞는다. 실제 처리 속도가 추론 부하 등으로 30fps보다
+크게 떨어지면 이 임계값들의 실제 시간 의미가 달라지므로 재보정이 필요할 수 있다.
 """
 from __future__ import annotations
 

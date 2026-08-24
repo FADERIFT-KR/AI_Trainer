@@ -60,7 +60,9 @@ def parse_args() -> argparse.Namespace:
         help="출력 mp4 경로 (기본: output/<actor>_<오류유형>_rep<rep>_cam<N>.mp4)",
     )
     p.add_argument(
-        "--fps", type=float, default=15.0, help="출력 영상 fps (원본 fps 정보가 없어 기본 15)"
+        "--fps", type=float, default=30.0,
+        help="출력 영상 fps (AI Hub 원본 캡처가 30fps로 확인됨 — annotation.json의 "
+        "start_time/end_time 대비 start_frame/end_frame 역산 검증 완료; 기본 30)",
     )
     p.add_argument(
         "--list", action="store_true", help="조건에 맞는 시퀀스 목록만 출력하고 종료"

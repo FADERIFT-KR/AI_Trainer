@@ -52,7 +52,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--class", dest="class_label", default="정상", choices=["정상", "발뒤꿈치오류", "엉덩이하방오류", "고관절오류"])
     p.add_argument("--medoid-rank", type=int, default=0, help="Reference DB medoid 순번 (0~3)")
     p.add_argument("--tier", default="ground_truth", choices=["ground_truth", "operational"])
-    p.add_argument("--fps", type=float, default=12.0)
+    p.add_argument("--fps", type=float, default=30.0, help="AI Hub 원본 캡처 fps(30)에 맞춰 재생 (기본 30)")
 
     p.add_argument("--zip", default=None, help="지정하면 Reference DB 대신 이 zip에서 직접 시퀀스를 읽어 재생")
     p.add_argument("--actor", default=None)
