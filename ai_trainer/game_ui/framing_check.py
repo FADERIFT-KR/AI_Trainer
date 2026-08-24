@@ -18,17 +18,19 @@ import numpy as np
 # image_landmarks(33,4) 인덱스
 NOSE, L_SHOULDER, R_SHOULDER = 0, 11, 12
 L_HIP, R_HIP, L_KNEE, R_KNEE = 23, 24, 25, 26
-L_ANKLE, R_ANKLE, L_FOOT, R_FOOT = 27, 28, 31, 32
+L_ANKLE, R_ANKLE, L_HEEL, R_HEEL, L_FOOT, R_FOOT = 27, 28, 29, 30, 31, 32
 
-REQUIRED_LANDMARKS = (NOSE, L_SHOULDER, R_SHOULDER, L_HIP, R_HIP, L_KNEE, R_KNEE, L_ANKLE, R_ANKLE, L_FOOT, R_FOOT)
+# BigToe(foot_index)는 MediaPipe에서 가장 불안정하게 잡히는 랜드마크라(작고, 신발/각도에
+# 취약) 필수 조건에서 뺐다 — 발이 화면에 들어왔는지는 ankle/heel로도 충분히 판단 가능.
+REQUIRED_LANDMARKS = (NOSE, L_SHOULDER, R_SHOULDER, L_HIP, R_HIP, L_KNEE, R_KNEE, L_ANKLE, R_ANKLE, L_HEEL, R_HEEL)
 
 # 프레임 대비 이상적인 전신 bbox 비율 (정면에서 2~3m 거리 기준 목표치)
-MIN_BODY_HEIGHT_RATIO = 0.55
-MAX_BODY_HEIGHT_RATIO = 0.90
-EDGE_MARGIN_RATIO = 0.03
-CENTER_TOLERANCE_RATIO = 0.18
-MIN_VISIBILITY = 0.5
-MIN_FRONTAL_HIP_RATIO = 0.10  # |LHip_x-RHip_x| / body_bbox_width, 이보다 작으면 옆모습으로 판단
+MIN_BODY_HEIGHT_RATIO = 0.50
+MAX_BODY_HEIGHT_RATIO = 0.92
+EDGE_MARGIN_RATIO = 0.02
+CENTER_TOLERANCE_RATIO = 0.20
+MIN_VISIBILITY = 0.4
+MIN_FRONTAL_HIP_RATIO = 0.07  # |LHip_x-RHip_x| / body_bbox_width, 이보다 작으면 옆모습으로 판단
 
 
 @dataclass(frozen=True)
@@ -55,7 +57,7 @@ def check_framing(image_landmarks: np.ndarray, width: int, height: int) -> Frami
 
     missing = [i for i in REQUIRED_LANDMARKS if vis[i] < MIN_VISIBILITY]
     if missing:
-        if any(i in (L_ANKLE, R_ANKLE, L_FOOT, R_FOOT) for i in missing):
+        if any(i in (L_ANKLE, R_ANKLE, L_HEEL, R_HEEL) for i in missing):
             msg = "발이 화면에 안 보여요 — 카메라에서 조금 더 멀어져 전신이 다 보이게 서주세요"
         elif NOSE in missing:
             msg = "얼굴이 안 보여요 — 카메라를 정면으로 봐주세요"

@@ -67,6 +67,14 @@ class SquatPipelineWorker(QThread):
         # 단순 bool 속성 읽기/쓰기라 CPython GIL 하에서 스레드 간 공유에 안전하다
         # (QThread.isInterruptionRequested()와 같은 패턴).
         self.session_active = False
+        # framing_check는 매 프레임 독립적으로 계산되는데, MediaPipe 추정이 한 프레임만
+        # 살짝 흔들려도(예: 발뒤꿈치 visibility가 잠깐 0.4 밑으로) 바로 "오류"로 튀면
+        # 실제로는 잘 서 있는데도 판정이 계속 깜빡여 진행이 안 되는 문제가 있었다.
+        # 그래서 상태를 몇 프레임 연속으로 같은 방향일 때만 실제로 전환한다(히스테리시스).
+        self._framing_effective_ok = False
+        self._framing_streak = 0
+
+    FRAMING_DEBOUNCE_FRAMES = 5
 
     def run(self) -> None:
         capture = None
@@ -147,13 +155,25 @@ class SquatPipelineWorker(QThread):
                 if pose_found:
                     video_bgr = draw_2d_pose(display_bgr, observation.image_landmarks)
                     framing = check_framing(observation.image_landmarks, w, h)
-                    framing_ok = framing.ok
                     framing_message = framing.message
 
-                    box_color = (90, 220, 90) if framing.ok else (60, 60, 240)
+                    # 히스테리시스: 판정이 바뀌는 방향으로 연속 N프레임 나와야 실제로 전환.
+                    # 한 프레임만 흔들려도 바로 오류로 튀는 것을 막아준다.
+                    if framing.ok == self._framing_effective_ok:
+                        self._framing_streak = 0
+                    else:
+                        self._framing_streak += 1
+                        if self._framing_streak >= self.FRAMING_DEBOUNCE_FRAMES:
+                            self._framing_effective_ok = framing.ok
+                            self._framing_streak = 0
+                    framing_ok = self._framing_effective_ok
+
+                    box_color = (90, 220, 90) if framing_ok else (60, 60, 240)
                     cv2.rectangle(video_bgr, (gbox[0], gbox[1]), (gbox[2], gbox[3]), box_color, 2)
                     if framing.body_box is not None:
                         cv2.rectangle(video_bgr, (framing.body_box[0], framing.body_box[1]), (framing.body_box[2], framing.body_box[3]), (0, 200, 255), 1)
+                    if not framing_ok:
+                        cv2.putText(video_bgr, framing.message, (12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (60, 60, 240), 2, cv2.LINE_AA)
 
                     if framing_ok and self.session_active:
                         # 화각/거리/정면 여부가 학습 데이터(AI Hub camera1)와 맞고, 3-2-1 카운트다운이
