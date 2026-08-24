@@ -22,7 +22,7 @@ class CameraConfig:
     mirror: bool = True
     skeleton_width: int = 640
     skeleton_height: int = 480
-    confidence: float = 0.5
+    confidence: float = 0.4  # 실사용 환경(조명/거리 이상적이지 않음)에서 recall을 우선
 
     def __post_init__(self) -> None:
         if self.camera_index < 0:

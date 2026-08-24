@@ -15,7 +15,7 @@ def make_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--model",
         type=Path,
-        default=Path("models/pose_landmarker_lite.task"),
+        default=Path("models/pose_landmarker_full.task"),
         help="Local MediaPipe Pose Landmarker .task bundle",
     )
     parser.add_argument("--width", type=int, default=1280)

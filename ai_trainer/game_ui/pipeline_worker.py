@@ -30,7 +30,7 @@ from .error_explain import annotate_error
 from .framing_check import check_framing, guide_box as compute_guide_box
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-DEFAULT_MODEL_PATH = ROOT / "models" / "pose_landmarker_lite.task"
+DEFAULT_MODEL_PATH = ROOT / "models" / "pose_landmarker_full.task"
 LIFTING_CKPT = ROOT / "output" / "lifting_baseline" / "model_best.pt"
 WEIGHTS_CFG_PATH = ROOT / "configs" / "dtw_feature_weights.json"
 DB_DIR = ROOT / "output" / "reference_db"
@@ -174,6 +174,10 @@ class SquatPipelineWorker(QThread):
                         cv2.rectangle(video_bgr, (framing.body_box[0], framing.body_box[1]), (framing.body_box[2], framing.body_box[3]), (0, 200, 255), 1)
                     if not framing_ok:
                         cv2.putText(video_bgr, framing.message, (12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (60, 60, 240), 2, cv2.LINE_AA)
+                        if framing.low_confidence_joints:
+                            # 어떤 관절이 구체적으로 안 잡히는지 진단용으로 표시
+                            joints_str = ", ".join(f"{name}({v:.2f})" for name, v in framing.low_confidence_joints)
+                            cv2.putText(video_bgr, f"인식 약함: {joints_str}", (12, 52), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 180, 255), 1, cv2.LINE_AA)
 
                     if framing_ok and self.session_active:
                         # 화각/거리/정면 여부가 학습 데이터(AI Hub camera1)와 맞고, 3-2-1 카운트다운이

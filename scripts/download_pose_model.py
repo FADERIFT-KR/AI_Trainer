@@ -1,4 +1,11 @@
-"""Explicitly download the pinned official MediaPipe lite pose model."""
+"""Explicitly download the pinned official MediaPipe pose model.
+
+기본값을 "full" 모델로 사용한다. "lite"는 가장 가볍고 빠르지만 정확도가 떨어져
+실사용 환경(조명/거리/각도가 AI Hub 스튜디오만큼 이상적이지 않음)에서 관절
+visibility가 낮게 잡히는 문제가 있었다("발이 안 보여요" 같은 위치 안내가 실제로는
+위치가 아니라 인식 정확도 부족 때문에 자주 뜨는 원인 중 하나). MPS/CPU에서도
+충분히 실시간으로 돌아가는 속도라 정확도를 우선한다.
+"""
 
 from __future__ import annotations
 
@@ -16,11 +23,11 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MODEL_URL = (
     "https://storage.googleapis.com/mediapipe-models/pose_landmarker/"
-    "pose_landmarker_lite/float16/1/pose_landmarker_lite.task"
+    "pose_landmarker_full/float16/latest/pose_landmarker_full.task"
 )
-DEFAULT_OUTPUT = PROJECT_ROOT / "models" / "pose_landmarker_lite.task"
+DEFAULT_OUTPUT = PROJECT_ROOT / "models" / "pose_landmarker_full.task"
 MINIMUM_MODEL_BYTES = 1_000_000
-MODEL_SHA256 = "59929e1d1ee95287735ddd833b19cf4ac46d29bc7afddbbf6753c459690d574a"
+MODEL_SHA256 = "4eaa5eb7a98365221087693fcc286334cf0858e2eb6e15b506aa4a7ecdcec4ad"
 
 
 def _valid_model(path: Path) -> bool:

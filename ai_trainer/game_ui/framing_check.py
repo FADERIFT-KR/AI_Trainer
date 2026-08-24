@@ -23,6 +23,11 @@ L_ANKLE, R_ANKLE, L_HEEL, R_HEEL, L_FOOT, R_FOOT = 27, 28, 29, 30, 31, 32
 # BigToe(foot_index)는 MediaPipe에서 가장 불안정하게 잡히는 랜드마크라(작고, 신발/각도에
 # 취약) 필수 조건에서 뺐다 — 발이 화면에 들어왔는지는 ankle/heel로도 충분히 판단 가능.
 REQUIRED_LANDMARKS = (NOSE, L_SHOULDER, R_SHOULDER, L_HIP, R_HIP, L_KNEE, R_KNEE, L_ANKLE, R_ANKLE, L_HEEL, R_HEEL)
+REQUIRED_LANDMARK_NAMES = {
+    NOSE: "코", L_SHOULDER: "왼어깨", R_SHOULDER: "오른어깨",
+    L_HIP: "왼골반", R_HIP: "오른골반", L_KNEE: "왼무릎", R_KNEE: "오른무릎",
+    L_ANKLE: "왼발목", R_ANKLE: "오른발목", L_HEEL: "왼뒤꿈치", R_HEEL: "오른뒤꿈치",
+}
 
 # 프레임 대비 이상적인 전신 bbox 비율 (정면에서 2~3m 거리 기준 목표치)
 MIN_BODY_HEIGHT_RATIO = 0.50
@@ -39,6 +44,7 @@ class FramingResult:
     message: str
     guide_box: tuple[int, int, int, int]  # 화면에 그릴 목표 영역 (x0,y0,x1,y1)
     body_box: tuple[int, int, int, int] | None  # 실제 감지된 전신 bbox (있으면)
+    low_confidence_joints: tuple[tuple[str, float], ...] = ()  # 진단용: (관절명, visibility) 임계값 미달 목록
 
 
 def guide_box(width: int, height: int) -> tuple[int, int, int, int]:
@@ -55,6 +61,11 @@ def check_framing(image_landmarks: np.ndarray, width: int, height: int) -> Frami
     ys = image_landmarks[:, 1] * height
     vis = image_landmarks[:, 3]
 
+    # 진단용: 임계값 미달인 필수 관절과 그 visibility 값 — 왜 안 되는지 화면에 바로 보여주기 위함
+    low_conf = tuple(
+        (REQUIRED_LANDMARK_NAMES[i], float(vis[i])) for i in REQUIRED_LANDMARKS if vis[i] < MIN_VISIBILITY
+    )
+
     missing = [i for i in REQUIRED_LANDMARKS if vis[i] < MIN_VISIBILITY]
     if missing:
         if any(i in (L_ANKLE, R_ANKLE, L_HEEL, R_HEEL) for i in missing):
@@ -63,7 +74,7 @@ def check_framing(image_landmarks: np.ndarray, width: int, height: int) -> Frami
             msg = "얼굴이 안 보여요 — 카메라를 정면으로 봐주세요"
         else:
             msg = "몸 일부가 화면 밖에 있어요 — 전신이 다 보이도록 위치를 조정해주세요"
-        return FramingResult(False, msg, box, None)
+        return FramingResult(False, msg, box, None, low_conf)
 
     used = REQUIRED_LANDMARKS
     x0b, x1b = float(xs[list(used)].min()), float(xs[list(used)].max())
@@ -73,24 +84,24 @@ def check_framing(image_landmarks: np.ndarray, width: int, height: int) -> Frami
     body_w = max(x1b - x0b, 1.0)
 
     if x0b <= width * EDGE_MARGIN_RATIO or x1b >= width * (1 - EDGE_MARGIN_RATIO):
-        return FramingResult(False, "몸이 화면 가장자리에 걸려있어요 — 카메라에서 조금 물러나주세요", box, body_box)
+        return FramingResult(False, "몸이 화면 가장자리에 걸려있어요 — 카메라에서 조금 물러나주세요", box, body_box, low_conf)
     if y0b <= height * EDGE_MARGIN_RATIO or y1b >= height * (1 - EDGE_MARGIN_RATIO):
-        return FramingResult(False, "머리나 발이 화면에 잘려요 — 카메라에서 조금 물러나주세요", box, body_box)
+        return FramingResult(False, "머리나 발이 화면에 잘려요 — 카메라에서 조금 물러나주세요", box, body_box, low_conf)
 
     height_ratio = body_h / height
     if height_ratio < MIN_BODY_HEIGHT_RATIO:
-        return FramingResult(False, "카메라에 조금 더 가까이 서주세요", box, body_box)
+        return FramingResult(False, "카메라에 조금 더 가까이 서주세요", box, body_box, low_conf)
     if height_ratio > MAX_BODY_HEIGHT_RATIO:
-        return FramingResult(False, "카메라에서 조금 더 물러나주세요", box, body_box)
+        return FramingResult(False, "카메라에서 조금 더 물러나주세요", box, body_box, low_conf)
 
     center_x = (x0b + x1b) / 2
     if center_x < width * (0.5 - CENTER_TOLERANCE_RATIO):
-        return FramingResult(False, "오른쪽으로 조금 이동해주세요", box, body_box)
+        return FramingResult(False, "오른쪽으로 조금 이동해주세요", box, body_box, low_conf)
     if center_x > width * (0.5 + CENTER_TOLERANCE_RATIO):
-        return FramingResult(False, "왼쪽으로 조금 이동해주세요", box, body_box)
+        return FramingResult(False, "왼쪽으로 조금 이동해주세요", box, body_box, low_conf)
 
     hip_sep = abs(xs[L_HIP] - xs[R_HIP])
     if hip_sep / body_w < MIN_FRONTAL_HIP_RATIO:
-        return FramingResult(False, "카메라를 정면으로 봐주세요 (옆모습으로는 분석이 어려워요)", box, body_box)
+        return FramingResult(False, "카메라를 정면으로 봐주세요 (옆모습으로는 분석이 어려워요)", box, body_box, low_conf)
 
-    return FramingResult(True, "준비 완료 — 스쿼트를 시작하세요", box, body_box)
+    return FramingResult(True, "준비 완료 — 스쿼트를 시작하세요", box, body_box, low_conf)
