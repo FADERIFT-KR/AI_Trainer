@@ -16,6 +16,14 @@ pelvis 높이가 같은 단위(leg_length)로 비교 가능하다. 이렇게 하
 앉으면 레퍼런스도 천천히, 빨리 앉으면 레퍼런스도 빨리 따라간다 — 실제 움직임 속도와
 레퍼런스 재생이 항상 맞물린다.
 
+**튐(jerky) 방지**: 실시간 lifting 출력은 프레임마다 미세하게 흔들리는데(모델 노이즈),
+매번 "전체 구간에서 가장 가까운 높이"를 새로 찾으면 그 흔들림 때문에 커서가 앞뒤로
+튀어 화면이 뚝뚝 끊겨 보인다. 이를 막기 위해 두 가지를 더한다:
+  1) 실시간 pelvis 높이에 지수이동평균(EMA)을 적용해 프레임 간 노이즈를 줄인다.
+  2) 매칭 탐색을 "커서 기준 앞으로 몇 프레임"으로만 제한하고, 커서는 절대 뒤로
+     가지 않으며 한 틱에 최대 `MAX_STEP_PER_TICK`프레임까지만 이동한다. 이렇게 하면
+     항상 완만하게 앞으로만 진행해 부드럽게 보인다(약간의 반응 지연은 감수).
+
 **준비(prep) 상태는 예외적으로 진행시키지 않고 첫 프레임(=대기 자세)에 고정한다.**
 사용자가 가만히 서 있어도 관절 추정의 미세한 흔들림 때문에 phase가 계속
 재확인되며 커서가 계속 흘러가 "레퍼런스가 혼자 계속 움직이는" 것처럼 보이는 문제가
@@ -37,6 +45,8 @@ from ai_trainer.phase_features import extract_phase_features
 ROOT = Path(__file__).resolve().parent.parent.parent
 DB_DIR = ROOT / "output" / "reference_db"
 REFERENCE_FPS = 30.0  # AI Hub 원본 캡처 fps (검증 완료, claude.md 7장 참고) — fps 폴백에서만 사용
+HEIGHT_SMOOTH_ALPHA = 0.3  # 실시간 pelvis 높이 EMA 계수 (낮을수록 더 매끄럽지만 반응은 느려짐)
+MAX_STEP_PER_TICK = 4  # 한 틱에 레퍼런스 커서가 최대 이만큼만 전진 (역행/급점프 방지)
 
 # OnlineSquatSession 내부 상태(영문) -> phase_boundaries 키(국문)
 STATE_TO_PHASE = {"prep": "준비", "descend": "하강", "bottom": "최저점", "ascend": "상승"}
@@ -65,6 +75,7 @@ class ReferenceTrack:
         self._current_phase = "준비"
         self._cursor = self.bounds.get("준비", (0, 1))[0]
         self._frac_accum = 0.0  # fps 폴백용 1프레임 미만 진행분 누적
+        self._smoothed_height: float | None = None  # 실시간 pelvis 높이 EMA 상태
 
     def lateral_vertical(self, t: int) -> np.ndarray:
         t = max(0, min(t, self.coords.shape[0] - 1))
@@ -87,13 +98,24 @@ class ReferenceTrack:
             self._current_phase = phase
             self._cursor = self.bounds.get(phase, (0, 1))[0]
             self._frac_accum = 0.0
+            self._smoothed_height = live_pelvis_height  # 새 phase 시작 시 EMA 리셋
         elif phase != "준비":
             s, e = self.bounds.get(phase, (0, self.coords.shape[0]))
             if live_pelvis_height is not None and e > s:
-                # 현재 phase 구간 안에서 사용자 pelvis 높이와 가장 가까운 프레임을 찾는다.
-                seg = self.pelvis_height[s:e]
-                offset = int(np.argmin(np.abs(seg - live_pelvis_height)))
-                self._cursor = s + offset
+                if self._smoothed_height is None:
+                    self._smoothed_height = live_pelvis_height
+                else:
+                    self._smoothed_height = (
+                        HEIGHT_SMOOTH_ALPHA * live_pelvis_height + (1 - HEIGHT_SMOOTH_ALPHA) * self._smoothed_height
+                    )
+                # 커서보다 앞쪽(진행 방향)의 좁은 구간에서만 최적 매칭 프레임을 찾는다.
+                # -> 노이즈로 인한 역행/큰 점프를 원천 차단하고, 항상 조금씩만 앞으로 이동.
+                search_start = min(self._cursor, e - 1)
+                search_end = min(e, search_start + 1 + MAX_STEP_PER_TICK)
+                if search_end > search_start:
+                    seg = self.pelvis_height[search_start:search_end]
+                    offset = int(np.argmin(np.abs(seg - self._smoothed_height)))
+                    self._cursor = search_start + offset
             else:
                 step = (live_fps / REFERENCE_FPS) if live_fps and live_fps > 0 else 1.0
                 self._frac_accum += step
