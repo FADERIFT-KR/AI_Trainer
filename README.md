@@ -7,7 +7,19 @@
 - **웹캠 2D/3D 스켈레톤 추출** (`ai_trainer/live_pose/`) — MediaPipe Pose(Task API) + PyQt5
 - **AI Hub CSV/JSON 기반 정상 자세 레퍼런스 + Weighted DTW 비교/채점 엔진** (`ai_trainer/` 나머지 모듈, `feature/dtw-pipeline` 유래)
 
-목표 UI: 운동 종목 선택 → 좌(웹캠+내 스켈레톤) / 우(정상 레퍼런스 스켈레톤) 2분할 화면 → 실시간 타이밍 동기화 비교 → 자세 정오 판정. (진행 중, 아래 "다음 단계" 참고)
+목표 UI: 운동 종목 선택 → 좌(웹캠+내 스켈레톤) / 우(정상 레퍼런스 스켈레톤) 2분할 화면 → 실시간 타이밍 동기화 비교 → 자세 정오 판정.
+
+## 통합 게임 UI 실행
+
+```bash
+python scripts/download_pose_model.py   # 최초 1회
+python scripts/build_reference_db.py    # Reference DB가 없다면 먼저 (README 아래쪽 참고)
+python scripts/run_game.py
+```
+
+운동 선택 화면에서 "스쿼트" 클릭 → 좌측 웹캠+내 스켈레톤 / 우측 정상 레퍼런스 스켈레톤이 동시에 재생됩니다. 우측은 사용자가 감지된 phase(준비/하강/최저점/상승)에 맞춰 같은 phase의 레퍼런스 구간을 재생하며 동기화됩니다. 화면 하단에 실시간 정오 판정(간이)과, 반복 종료 시 최종 판정(오류유형/점수/주요 특징)이 표시됩니다. `ESC`로 종목 선택 화면으로 돌아가거나 종료.
+
+> ⚠️ 이 앱은 실제 카메라 권한이 있는 터미널에서 직접 실행해야 합니다(코딩 에이전트 샌드박스에서는 카메라를 열 수 없음).
 
 ## 개발 환경 설정
 
