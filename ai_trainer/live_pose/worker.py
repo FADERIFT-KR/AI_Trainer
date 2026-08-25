@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from PyQt5.QtCore import QThread, pyqtSignal
@@ -13,9 +14,20 @@ from .core import FrameProcessor
 from .mediapipe_pose import MediaPipePoseDetector, PoseBackendError
 
 
+def _default_camera_index() -> int:
+    """기본 카메라 index. 내장캠(보통 0) 대신 외장캠을 쓰고 싶으면 코드를 고칠
+    필요 없이 `AI_TRAINER_CAMERA_INDEX` 환경변수로 바꿀 수 있다
+    (예: `export AI_TRAINER_CAMERA_INDEX=1`). macOS에서 외장 USB 웹캠은
+    보통 내장캠(0) 다음 index로 잡힌다."""
+    try:
+        return int(os.environ.get("AI_TRAINER_CAMERA_INDEX", "0"))
+    except ValueError:
+        return 0
+
+
 @dataclass(frozen=True)
 class CameraConfig:
-    camera_index: int = 0
+    camera_index: int = field(default_factory=_default_camera_index)
     width: int = 1280
     height: int = 720
     requested_fps: int = 30

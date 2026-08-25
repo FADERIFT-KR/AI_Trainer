@@ -7,6 +7,7 @@ import numpy as np
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QResizeEvent
 from PyQt5.QtWidgets import (
+    QButtonGroup,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -22,7 +23,7 @@ from ai_trainer.live_pose.worker import CameraConfig
 from ai_trainer.render import draw_skeleton_panel, fit_transform
 
 from .pipeline_worker import PipelineStatus, SquatPipelineWorker
-from .reference_track import REFERENCE_FPS, ReferenceTrack, list_available
+from .reference_track import DIFFICULTY_LABELS, REFERENCE_FPS, ReferenceTrack, difficulty_medoid_ranks, list_available
 
 REF_PANEL_W, REF_PANEL_H = 480, 480
 
@@ -35,9 +36,11 @@ COUNTDOWN_START_VALUE = 3
 
 
 class SelectionScreen(QWidget):
-    """1) 운동 종목을 선택하세요 (현재는 스쿼트 하나)."""
+    """1) 운동 종목을 선택하세요 (현재는 스쿼트 하나) + 2) 난이도(레퍼런스 속도) 선택."""
 
     start_requested = pyqtSignal(str, int)  # class_label, medoid_rank
+
+    DEFAULT_DIFFICULTY_IDX = 1  # "보통"
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -50,6 +53,48 @@ class SelectionScreen(QWidget):
         title.setStyleSheet("font-size: 26px; font-weight: 700; color: #e7ecf4;")
         layout.addWidget(title)
 
+        try:
+            self._class_label = "정상" if "정상" in {c for c, _ in list_available()} else list_available()[0][0]
+        except Exception:
+            self._class_label = "정상"
+
+        # 난이도 = 우측 레퍼런스가 보여주는 시범 동작의 템포. 같은 "정상" 클래스
+        # 안에서도 medoid(배우)마다 실제 하강 속도가 달라, 그 속도 분포에서
+        # 느림->빠름 순으로 골라낸 medoid_rank를 난이도에 매핑한다
+        # (reference_track.difficulty_medoid_ranks 참고). 판정(DTW) 로직과는
+        # 무관 — 오직 우측 화면에 뭘 보여줄지에만 영향을 준다.
+        try:
+            self._difficulty_ranks = difficulty_medoid_ranks(self._class_label)
+        except Exception:
+            self._difficulty_ranks = [0]
+        self._selected_difficulty_idx = min(self.DEFAULT_DIFFICULTY_IDX, len(self._difficulty_ranks) - 1)
+
+        difficulty_title = QLabel("난이도(레퍼런스 속도)를 선택하세요")
+        difficulty_title.setAlignment(Qt.AlignCenter)
+        difficulty_title.setStyleSheet("font-size: 15px; font-weight: 600; color: #cfd6e2;")
+        layout.addWidget(difficulty_title)
+
+        difficulty_row = QHBoxLayout()
+        difficulty_row.setSpacing(10)
+        self._difficulty_group = QButtonGroup(self)
+        self._difficulty_group.setExclusive(True)
+        for idx, _rank in enumerate(self._difficulty_ranks):
+            label = DIFFICULTY_LABELS[idx] if idx < len(DIFFICULTY_LABELS) else f"난이도 {idx + 1}"
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setMinimumHeight(44)
+            btn.setChecked(idx == self._selected_difficulty_idx)
+            btn.setStyleSheet(
+                "QPushButton { font-size: 15px; font-weight: 600; border-radius: 8px; "
+                "background: #232a38; color: #cfd6e2; border: 1px solid #343c4b; }"
+                "QPushButton:checked { background: #2f6feb; color: white; border: 1px solid #4c8bff; }"
+                "QPushButton:hover { background: #2c3444; }"
+            )
+            btn.clicked.connect(lambda _checked, i=idx: self._on_difficulty_selected(i))
+            self._difficulty_group.addButton(btn, idx)
+            difficulty_row.addWidget(btn)
+        layout.addLayout(difficulty_row)
+
         squat_btn = QPushButton("🏋️  스쿼트 (에어스쿼트)")
         squat_btn.setMinimumHeight(72)
         squat_btn.setStyleSheet(
@@ -57,11 +102,7 @@ class SelectionScreen(QWidget):
             "background: #2f6feb; color: white; }"
             "QPushButton:hover { background: #4c8bff; }"
         )
-        try:
-            classes = sorted({c for c, _ in list_available()})
-        except Exception:
-            classes = ["정상"]
-        squat_btn.clicked.connect(lambda: self.start_requested.emit("정상" if "정상" in classes else classes[0], 0))
+        squat_btn.clicked.connect(self._on_start_clicked)
         layout.addWidget(squat_btn)
 
         hint = QLabel("추후 다른 운동 종목이 추가될 예정입니다.")
@@ -69,6 +110,13 @@ class SelectionScreen(QWidget):
         hint.setStyleSheet("color: #8f9aaa;")
         layout.addWidget(hint)
         layout.addStretch(1)
+
+    def _on_difficulty_selected(self, idx: int) -> None:
+        self._selected_difficulty_idx = idx
+
+    def _on_start_clicked(self) -> None:
+        medoid_rank = self._difficulty_ranks[self._selected_difficulty_idx]
+        self.start_requested.emit(self._class_label, medoid_rank)
 
 
 class CompareScreen(QWidget):

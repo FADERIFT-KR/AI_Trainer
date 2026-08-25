@@ -55,7 +55,16 @@ def guide_box(width: int, height: int) -> tuple[int, int, int, int]:
     return x0, y0, x1, y1
 
 
-def check_framing(image_landmarks: np.ndarray, width: int, height: int) -> FramingResult:
+def check_framing(
+    image_landmarks: np.ndarray, width: int, height: int, relax_distance: bool = False
+) -> FramingResult:
+    """`relax_distance=True`이면 코~발목 화면상 높이 기반 거리 체크(너무 가깝다/멀다)를
+    건너뛴다. 스쿼트로 앉으면 고관절·무릎이 접히면서 이 높이가 자연히 줄어드는데,
+    이건 카메라와의 실제 거리가 변한 게 아니라 자세 때문이므로 최대 하강 지점 근처에서
+    "카메라에 조금 더 가까이 서주세요"가 잘못 뜨는 원인이 된다(실사용 재현 확인됨).
+    준비 자세에서 거리를 이미 확인했다면(session_active), 그 이후에는 화면 밖으로
+    잘리는지/중앙 이탈/정면 여부만 계속 체크하면 충분하다 — 이 셋은 스쿼트 도중에도
+    여전히 유효한 문제이므로 그대로 유지한다."""
     box = guide_box(width, height)
     xs = image_landmarks[:, 0] * width
     ys = image_landmarks[:, 1] * height
@@ -88,11 +97,12 @@ def check_framing(image_landmarks: np.ndarray, width: int, height: int) -> Frami
     if y0b <= height * EDGE_MARGIN_RATIO or y1b >= height * (1 - EDGE_MARGIN_RATIO):
         return FramingResult(False, "머리나 발이 화면에 잘려요 — 카메라에서 조금 물러나주세요", box, body_box, low_conf)
 
-    height_ratio = body_h / height
-    if height_ratio < MIN_BODY_HEIGHT_RATIO:
-        return FramingResult(False, "카메라에 조금 더 가까이 서주세요", box, body_box, low_conf)
-    if height_ratio > MAX_BODY_HEIGHT_RATIO:
-        return FramingResult(False, "카메라에서 조금 더 물러나주세요", box, body_box, low_conf)
+    if not relax_distance:
+        height_ratio = body_h / height
+        if height_ratio < MIN_BODY_HEIGHT_RATIO:
+            return FramingResult(False, "카메라에 조금 더 가까이 서주세요", box, body_box, low_conf)
+        if height_ratio > MAX_BODY_HEIGHT_RATIO:
+            return FramingResult(False, "카메라에서 조금 더 물러나주세요", box, body_box, low_conf)
 
     center_x = (x0b + x1b) / 2
     if center_x < width * (0.5 - CENTER_TOLERANCE_RATIO):

@@ -154,7 +154,11 @@ class SquatPipelineWorker(QThread):
 
                 if pose_found:
                     video_bgr = draw_2d_pose(display_bgr, observation.image_landmarks)
-                    framing = check_framing(observation.image_landmarks, w, h)
+                    # session_active(3-2-1 카운트다운 통과) 시점엔 준비 자세에서 거리가
+                    # 이미 확인된 상태이므로, 이후엔 거리 재체크(relax_distance)를 건너뛴다
+                    # — 안 그러면 스쿼트 최대 하강 지점에서 몸통이 접히며 화면상 세로
+                    # 길이가 줄어드는 걸 "카메라에서 멀어졌다"로 오판정한다(실사용 재현 확인).
+                    framing = check_framing(observation.image_landmarks, w, h, relax_distance=self.session_active)
                     framing_message = framing.message
 
                     # 히스테리시스: 판정이 바뀌는 방향으로 연속 N프레임 나와야 실제로 전환.
