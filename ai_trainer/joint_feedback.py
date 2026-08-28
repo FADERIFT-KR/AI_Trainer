@@ -29,31 +29,43 @@ _IDX = {name: i for i, name in enumerate(COMMON_JOINT_NAMES)}
 #   무릎 = Hip-Knee-Ankle (요청사항)
 #   고관절 = Shoulder-Hip-Knee (요청사항 — DTW의 hip_flexion_angle(Neck 기준)과는 다름,
 #            여기서는 좌우 각각 어깨를 기준으로 써서 좌우 비대칭도 잡아낼 수 있게 함)
-#   어깨 = Hip-Shoulder-Elbow (상완이 몸통 대비 얼마나 앞/뒤로 나갔는지)
+#
+# 어깨(Hip-Shoulder-Elbow)는 의도적으로 제외했다(2026-08-28, 실사용 확인) — 이 각도는
+# 상완을 얼마나 앞으로 뻗었는지를 재는데, "정상" 레퍼런스 프레임을 고르는 정렬 자체가
+# F_squat_form_focus 가중치(팔 좌표 제외)로 이뤄져서 팔 위치와 무관하게 골라진다. 그
+# 결과 사용자 팔이 안정적으로 앞으로 뻗어 있어도(정상 에어스쿼트 균형 자세) 매번 다른
+# 팔 자세의 레퍼런스 프레임과 비교돼 각도오차 50도 이상이 계속 나와 항상 BAD로 뜨는
+# 문제가 있었다. DTW 쪽에서 이미 같은 이유로 팔 raw 좌표를 뺀 것과 동일한 결정.
 TRACKED_JOINTS: dict[str, tuple[str, str, str]] = {
     "Left Knee": ("LHip", "LKnee", "LAnkle"),
     "Right Knee": ("RHip", "RKnee", "RAnkle"),
     "Left Hip": ("LShoulder", "LHip", "LKnee"),
     "Right Hip": ("RShoulder", "RHip", "RKnee"),
-    "Left Shoulder": ("LHip", "LShoulder", "LElbow"),
-    "Right Shoulder": ("RHip", "RShoulder", "RElbow"),
 }
 
 # ============================================================
 # 튜닝 파라미터 — 색상 기준/가중치를 바꾸고 싶으면 이 블록만 수정하면 된다.
+#
+# 2026-08-28 실측(아이폰 촬영 영상) 재보정: 위치오차(position_error)는 "정렬된 서로
+# 다른 두 사람"의 절대 관절 위치를 비교하는 값이라, leg_length로 정규화해도 개인마다
+# 팔/몸통 비율이 달라 자세가 맞아도 0.1~0.3 정도의 오차가 항상 발생한다는 게 확인됨
+# (예: 무릎 각도오차가 1~7도로 사실상 정확한 프레임에서도 position_error=0.10~0.29).
+# 그래서 position 비중은 낮추고(0.4->0.2) 개인차에 덜 민감한 각도(angle) 비중을
+# 높였다(0.6->0.8), POSITION_ERROR_SCALE도 완화(0.25->0.5). GREEN/YELLOW 임계값도
+# 이 재보정된 점수 분포에 맞춰 같이 올렸다(실측 예시로 검증: 무릎 각도오차 0.5~7도인
+# 프레임이 good/warning으로, 각도오차 30도 안팎인 프레임은 여전히 bad로 나옴).
 # ============================================================
-POSITION_WEIGHT = 0.4  # joint_score에서 위치 오차가 차지하는 비중
-ANGLE_WEIGHT = 0.6  # joint_score에서 각도 오차가 차지하는 비중 (POSITION_WEIGHT와 합이 1이 되도록 유지 권장)
+POSITION_WEIGHT = 0.2  # joint_score에서 위치 오차가 차지하는 비중
+ANGLE_WEIGHT = 0.8  # joint_score에서 각도 오차가 차지하는 비중 (POSITION_WEIGHT와 합이 1이 되도록 유지 권장)
 
 # 위치오차(leg_length 단위)가 이 값 이상이면 정규화 오차 1.0(최댓값)으로 클램프.
-# leg_length=1.0을 대략 "허벅지 길이"로 볼 때, 0.25는 그 1/4 정도 어긋나면 최댓값이라는 뜻.
-POSITION_ERROR_SCALE = 0.25
+POSITION_ERROR_SCALE = 0.5
 # 각도오차(도, degree)가 이 값 이상이면 정규화 오차 1.0으로 클램프.
 ANGLE_ERROR_SCALE = 45.0
 
-# 최종 0~1 joint_score 판정 기준 (0.05 = 5%).
-GREEN_THRESHOLD = 0.05
-YELLOW_THRESHOLD = 0.10
+# 최종 0~1 joint_score 판정 기준.
+GREEN_THRESHOLD = 0.08
+YELLOW_THRESHOLD = 0.18
 # ============================================================
 
 STATUS_GOOD, STATUS_WARNING, STATUS_BAD = "good", "warning", "bad"

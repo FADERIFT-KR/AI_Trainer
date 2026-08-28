@@ -32,6 +32,9 @@ REF_PANEL_W, REF_PANEL_H = 480, 480
 
 PHASE_LABEL_KR = {"prep": "준비", "descend": "하강", "bottom": "최저점", "ascend": "상승", None: "-"}
 
+# REP 완료 알림이 화면 중앙에 떠 있는 시간(ms).
+REP_POPUP_DURATION_MS = 1200
+
 # 관절별 오차 막대(JointBarRow) 색상/라벨 — joint_feedback.py의 GREEN/YELLOW_THRESHOLD로
 # 판정된 status 문자열("good"/"warning"/"bad")을 화면에 표시할 때 쓴다.
 _JOINT_STATUS_COLOR = {STATUS_GOOD: "#72df8d", STATUS_WARNING: "#f2bd61", STATUS_BAD: "#ff7b7b"}
@@ -277,6 +280,18 @@ class CompareScreen(QWidget):
         self._bad_streak_key: tuple[str, str] | None = None
         self._bad_streak_count = 0
 
+        # REP(한 번 앉았다 일어나기) 완료 시 화면 중앙에 잠깐 뜨는 결과 알림.
+        # 하강/상승 도중 계속 바뀌는 판정 라벨이 정신없다는 피드백(실사용 확인) 대응 —
+        # 동작 중엔 그대로 두고, 대신 "끝났다"는 확실한 순간을 하나 크게 짚어준다.
+        self.rep_popup_label = QLabel("", self)
+        self.rep_popup_label.setAlignment(Qt.AlignCenter)
+        self.rep_popup_label.hide()
+
+        self._rep_popup_timer = QTimer(self)
+        self._rep_popup_timer.setSingleShot(True)
+        self._rep_popup_timer.setInterval(REP_POPUP_DURATION_MS)
+        self._rep_popup_timer.timeout.connect(self.rep_popup_label.hide)
+
         # 우측 레퍼런스 패널 전용 타이머 — 카메라/추론 속도와 완전히 무관하게 항상
         # REFERENCE_FPS(원본 AI Hub 캡처 속도, 30fps)로만 흘러간다. 이게 "동작의 기준 속도"다.
         self._ref_playback_timer = QTimer(self)
@@ -286,10 +301,15 @@ class CompareScreen(QWidget):
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 (Qt override)
         super().resizeEvent(event)
         self._position_countdown_label()
+        self._position_rep_popup_label()
 
     def _position_countdown_label(self) -> None:
         w, h = 340, 240
         self.countdown_label.setGeometry((self.width() - w) // 2, (self.height() - h) // 2, w, h)
+
+    def _position_rep_popup_label(self) -> None:
+        w, h = 420, 160
+        self.rep_popup_label.setGeometry((self.width() - w) // 2, (self.height() - h) // 2, w, h)
 
     @staticmethod
     def _panel(title: str, image: ImagePanel) -> QGroupBox:
@@ -336,10 +356,10 @@ class CompareScreen(QWidget):
         return group
 
     def start(self, class_label: str, medoid_rank: int) -> None:
-        # 화면에 보여주는 "정답" 레퍼런스는 정확도가 더 중요하므로 Ground Truth 계층 사용
-        # (AI Hub 3d_points.csv = 카메라 8대 삼각측량 3D, camera1 단일뷰 lifting 근사가 아님).
-        # DTW 점수 계산(session_active 파이프라인)은 별개로 계속 Operational 계층을 사용한다
-        # (실사용자 입력도 lifting을 거치므로 그쪽과 도메인을 맞추는 게 더 정확했음, 기존 검증 결과).
+        # 화면에 보여주는 "정답" 레퍼런스와 DTW 점수 계산 둘 다 Ground Truth 계층(AI Hub
+        # 8카메라 삼각측량 실측 3D) 사용 — 실시간 3D 소스가 자체 lifting 모델(camera1 단일뷰
+        # 근사)에서 MediaPipe 자체 world_landmarks로 바뀌면서(2026-08-28), 비교 대상도 그
+        # lifting 모델이 재현된 Operational 계층이 아니라 이 실측 계층으로 함께 맞췄다.
         self.ref_track = ReferenceTrack(class_label=class_label, medoid_rank=medoid_rank, tier="ground_truth")
         self._ref_tf = fit_transform(self.ref_track.coords[:, :, [0, 1]], REF_PANEL_W, REF_PANEL_H, flip_y=True)
 
@@ -349,6 +369,8 @@ class CompareScreen(QWidget):
         self._bad_streak_key = None
         self._bad_streak_count = 0
         self.countdown_label.hide()
+        self._rep_popup_timer.stop()
+        self.rep_popup_label.hide()
         self.result_label.setText("")
         self.overall_score_label.setText("-")
         for row in self._joint_rows.values():
@@ -366,7 +388,9 @@ class CompareScreen(QWidget):
     def stop(self) -> None:
         self._countdown_timer.stop()
         self._ref_playback_timer.stop()
+        self._rep_popup_timer.stop()
         self.countdown_label.hide()
+        self.rep_popup_label.hide()
         if self.worker is not None and self.worker.isRunning():
             self.worker.requestInterruption()
             self.worker.wait(5000)
@@ -448,6 +472,23 @@ class CompareScreen(QWidget):
             "font-size: 20px; font-weight: 700; padding: 10px; border-radius: 8px; "
             + self._JUDGE_STYLES[kind]
         )
+
+    _REP_POPUP_STYLES = {
+        "good": "background: rgba(20,60,35,225); color: #8bffab; border: 3px solid #4ade80;",
+        "bad": "background: rgba(60,20,20,225); color: #ffb3b3; border: 3px solid #ff6b6b;",
+    }
+
+    def _show_rep_popup(self, text: str, kind: str) -> None:
+        """REP(한 번 앉았다 일어나기)가 끝날 때마다 화면 중앙에 잠깐 띄우는 결과 알림.
+        동작 중 계속 바뀌는 judge_label과 별개로, "끝났다"는 순간 하나를 확실히 짚어준다."""
+        self.rep_popup_label.setText(text)
+        self.rep_popup_label.setStyleSheet(
+            "font-size: 44px; font-weight: 800; border-radius: 20px; " + self._REP_POPUP_STYLES[kind]
+        )
+        self._position_rep_popup_label()
+        self.rep_popup_label.show()
+        self.rep_popup_label.raise_()
+        self._rep_popup_timer.start()
 
     def _update_joint_panel(self, status: PipelineStatus) -> None:
         """관절별 오차 막대 + Overall Motion Similarity 갱신.
@@ -568,6 +609,10 @@ class CompareScreen(QWidget):
                 f"REP 종료 → 판정: {display_class}{confidence_note}  |  유사도: {score_text}  |  "
                 f"주요 특징: {', '.join(name for name, _ in r.top_contributing_features)}"
             )
+            if display_class == "정상":
+                self._show_rep_popup(f"성공! 👍\n{score_text}", "good")
+            else:
+                self._show_rep_popup(f"REP {r.rep_index + 1} 완료\n{display_class}", "bad")
 
     def _on_error(self, message: str) -> None:
         self.status_label.setText(f"오류: {message}")
