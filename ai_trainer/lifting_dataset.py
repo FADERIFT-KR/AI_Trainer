@@ -18,7 +18,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .actor_split import load_all_air_squat_sequences
+from .actor_split import load_air_squat_sequences
 from .aihub_zip import AiHubZip, SequenceKey
 from .common_skeleton import to_common_skeleton
 from .normalization import hip_center_3d, normalize_2d_sequence
@@ -97,25 +97,21 @@ def build_windows_for_sequence(
 
 
 def build_split_datasets(
-    tl_zip: str | Path, vl_zip: str | Path, split_path: str | Path
+    dataset_path: str | Path, split_path: str | Path
 ) -> tuple[list[WindowSample], list[WindowSample]]:
     """actor_split.json 기준으로 train/val 시퀀스를 나누고, 각 시퀀스 전체를 윈도우로 변환한다."""
     actor_to_split = load_actor_split(split_path)
-    sequences = load_all_air_squat_sequences(tl_zip, vl_zip)
+    sequences = load_air_squat_sequences(dataset_path)
 
-    zips = {"TL": AiHubZip(tl_zip), "VL": AiHubZip(vl_zip)}
     train_samples: list[WindowSample] = []
     val_samples: list[WindowSample] = []
-    try:
+    with AiHubZip(dataset_path) as dataset:
         for os_ in sequences:
             side = actor_to_split.get(os_.seq.actor)
             if side is None:
                 continue  # split에 없는 actor(있어서는 안 되지만 방어적으로 스킵)
-            samples = build_windows_for_sequence(zips[os_.origin], os_.seq, os_.origin)
+            samples = build_windows_for_sequence(dataset, os_.seq, os_.origin)
             (train_samples if side == "train" else val_samples).extend(samples)
-    finally:
-        for z in zips.values():
-            z.close()
 
     return train_samples, val_samples
 

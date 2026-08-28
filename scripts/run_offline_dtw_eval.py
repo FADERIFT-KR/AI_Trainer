@@ -21,8 +21,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import numpy as np  # noqa: E402
 import torch  # noqa: E402
 
-from ai_trainer.actor_split import load_all_air_squat_sequences  # noqa: E402
+from ai_trainer.actor_split import load_air_squat_sequences  # noqa: E402
 from ai_trainer.aihub_zip import AiHubZip  # noqa: E402
+from ai_trainer.dataset_config import DATASET_PATH  # noqa: E402
 from ai_trainer.dtw_compare import PHASES, multi_reference_distance, resolve_weights  # noqa: E402
 from ai_trainer.features import extract_all_features  # noqa: E402
 from ai_trainer.lifting_dataset import load_actor_split  # noqa: E402
@@ -34,14 +35,6 @@ from ai_trainer.reference_pipeline import build_operational_reference  # noqa: E
 from ai_trainer.scoring import distance_to_score, fit_score_calibration  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-TL_ZIP = (
-    "/Users/faderift/Project/Crossfit_Labeling_Data/213.크로스핏_동작_데이터/"
-    "01-1.정식개방데이터/Training/02.라벨링데이터/TL.zip"
-)
-VL_ZIP = (
-    "/Users/faderift/Project/Crossfit_Labeling_Data/213.크로스핏_동작_데이터/"
-    "01-1.정식개방데이터/Validation/02.라벨링데이터/VL.zip"
-)
 SPLIT_PATH = ROOT / "configs" / "actor_split.json"
 WEIGHTS_CFG_PATH = ROOT / "configs" / "dtw_feature_weights.json"
 DB_DIR = ROOT / "output" / "reference_db"
@@ -123,15 +116,15 @@ def main() -> None:
     print(f"Reference DB medoid actor: {sorted(medoid_actor_ids)}")
 
     actor_to_split = load_actor_split(SPLIT_PATH)
-    all_seqs = load_all_air_squat_sequences(TL_ZIP, VL_ZIP)
+    all_seqs = load_air_squat_sequences(DATASET_PATH)
     val_seqs = [os_ for os_ in all_seqs if actor_to_split.get(os_.seq.actor) == "val" and os_.seq.error_type in CLASSES]
     print(f"Validation query 대상: {len(val_seqs)}개 (actor {len({o.seq.actor for o in val_seqs})}명)")
 
     overlap = medoid_actor_ids & {o.seq.actor for o in val_seqs}
     assert not overlap, f"actor leakage 발견: {overlap}"
-    print("actor-disjoint 확인 통과 (medoid actor ∩ val actor = ∅)")
+    print("actor-disjoint 확인 통과 (medoid actor와 val actor의 교집합 없음)")
 
-    zips = {"TL": AiHubZip(TL_ZIP), "VL": AiHubZip(VL_ZIP)}
+    zips = {"DATASET": AiHubZip(DATASET_PATH)}
 
     # ---- 1) validation query 구축 (한 번만 계산, 이후 여러 설정에 재사용) ----
     print("\nValidation query 생성 중 (camera1 2D -> lifting model -> 정규화)...")

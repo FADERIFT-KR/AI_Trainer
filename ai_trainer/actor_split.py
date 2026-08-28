@@ -26,17 +26,26 @@ _LEVEL_PREFIX = {"CA": "고급", "CB": "초급", "CI": "중급"}
 class OriginSequence:
     """(원본 zip 출처, 시퀀스 키)."""
 
-    origin: str  # "TL" or "VL"
+    origin: str  # Source label, e.g. "TL", "VL", or "DATASET"
     seq: SequenceKey
+
+
+def load_air_squat_sequences(
+    path: str | Path, origin: str = "DATASET"
+) -> list[OriginSequence]:
+    """Load all air-squat sequences from one dataset source."""
+    with AiHubZip(path) as dataset:
+        return [
+            OriginSequence(origin, seq)
+            for seq in dataset.iter_air_squat_sequences()
+        ]
 
 
 def load_all_air_squat_sequences(tl_zip: str | Path, vl_zip: str | Path) -> list[OriginSequence]:
     """TL.zip과 VL.zip을 합쳐 에어스쿼트 전체 시퀀스 목록을 만든다."""
     out: list[OriginSequence] = []
     for origin, path in (("TL", tl_zip), ("VL", vl_zip)):
-        with AiHubZip(path) as z:
-            for seq in z.iter_air_squat_sequences():
-                out.append(OriginSequence(origin, seq))
+        out.extend(load_air_squat_sequences(path, origin=origin))
     return out
 
 

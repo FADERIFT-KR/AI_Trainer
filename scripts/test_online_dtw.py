@@ -22,9 +22,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import numpy as np  # noqa: E402
 import torch  # noqa: E402
 
-from ai_trainer.actor_split import load_all_air_squat_sequences  # noqa: E402
+from ai_trainer.actor_split import load_air_squat_sequences  # noqa: E402
 from ai_trainer.aihub_zip import AiHubZip  # noqa: E402
 from ai_trainer.common_skeleton import to_common_skeleton  # noqa: E402
+from ai_trainer.dataset_config import DATASET_PATH  # noqa: E402
 from ai_trainer.dtw_compare import multi_reference_distance, resolve_weights  # noqa: E402
 from ai_trainer.features import extract_all_features  # noqa: E402
 from ai_trainer.lifting_dataset import load_actor_split  # noqa: E402
@@ -36,14 +37,6 @@ from ai_trainer.reference_db_io import load_reference_db  # noqa: E402
 from ai_trainer.reference_pipeline import build_operational_reference  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-TL_ZIP = (
-    "/Users/faderift/Project/Crossfit_Labeling_Data/213.크로스핏_동작_데이터/"
-    "01-1.정식개방데이터/Training/02.라벨링데이터/TL.zip"
-)
-VL_ZIP = (
-    "/Users/faderift/Project/Crossfit_Labeling_Data/213.크로스핏_동작_데이터/"
-    "01-1.정식개방데이터/Validation/02.라벨링데이터/VL.zip"
-)
 SPLIT_PATH = ROOT / "configs" / "actor_split.json"
 WEIGHTS_CFG_PATH = ROOT / "configs" / "dtw_feature_weights.json"
 DB_DIR = ROOT / "output" / "reference_db"
@@ -80,7 +73,7 @@ def main() -> None:
         score_calib = json.loads(OFFLINE_REPORT_PATH.read_text(encoding="utf-8"))["score_calibration"]
 
     actor_to_split = load_actor_split(SPLIT_PATH)
-    all_seqs = load_all_air_squat_sequences(TL_ZIP, VL_ZIP)
+    all_seqs = load_air_squat_sequences(DATASET_PATH)
     val_seqs = [os_ for os_ in all_seqs if actor_to_split.get(os_.seq.actor) == "val" and os_.seq.error_type in CLASSES]
 
     import random
@@ -96,7 +89,7 @@ def main() -> None:
         if len(picked) >= N_TEST_SEQS:
             break
 
-    zips = {"TL": AiHubZip(TL_ZIP), "VL": AiHubZip(VL_ZIP)}
+    zips = {"DATASET": AiHubZip(DATASET_PATH)}
     all_reports = []
 
     for os_ in picked:

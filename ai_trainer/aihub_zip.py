@@ -1,8 +1,8 @@
-"""AI Hub 크로스핏(에어스쿼트) 라벨링 데이터(TL.zip / VL.zip) 접근 유틸리티.
+"""AI Hub 크로스핏(에어스쿼트) 라벨링 데이터 접근 유틸리티.
 
-zip 파일을 압축 해제하지 않고 ``zipfile``로 직접 열어 필요한 CSV/JSON만
-메모리에서 읽는다. zip 내부 한글 파일명은 cp437로 잘못 인코딩되어 있으므로
-cp949로 복원해서 사용한다.
+TL.zip / VL.zip은 ``zipfile``로 직접 열고, 이미 추출된 데이터셋 디렉터리도
+동일한 인터페이스로 읽는다. zip 내부 한글 파일명은 cp437로 잘못 인코딩되어
+있으므로 cp949로 복원해서 사용한다.
 
 디렉터리 규칙 (에어스쿼트 기준)::
 
@@ -36,6 +36,7 @@ JOINT_NAMES = [
 _SEQ_3D_RE = re.compile(
     r"^스쿼트/에어스쿼트/([^/]+)/([^/]+)/([^/]+)/(\d+)/3d_points\.csv$"
 )
+_AIR_SQUAT_PREFIX = "스쿼트/에어스쿼트"
 
 
 def decode_name(name: str) -> str:
@@ -64,19 +65,63 @@ class SequenceKey:
 
 
 class AiHubZip:
-    """TL.zip 또는 VL.zip 한 개를 감싸는 read-only 접근자."""
+    """TL/VL zip 또는 추출된 에어스쿼트 디렉터리의 read-only 접근자.
+
+    추출 디렉터리는 다음 세 위치 중 하나를 받을 수 있다.
+
+    - ``.../dataset`` (바로 아래에 ``에어스쿼트``가 있는 형태)
+    - ``.../스쿼트`` (바로 아래에 ``에어스쿼트``가 있는 형태)
+    - ``.../에어스쿼트`` 자체
+
+    디렉터리 파일은 기존 zip 내부 경로인 ``스쿼트/에어스쿼트/...``로 가상
+    매핑하므로 나머지 읽기 API는 저장 형식과 무관하게 동일하게 동작한다.
+    """
 
     def __init__(self, zip_path: str | Path):
         self.zip_path = Path(zip_path)
         if not self.zip_path.exists():
-            raise FileNotFoundError(f"zip 파일을 찾을 수 없습니다: {self.zip_path}")
-        self._zf = zipfile.ZipFile(self.zip_path)
-        self._name_map: dict[str, zipfile.ZipInfo] = {
-            decode_name(zi.filename): zi for zi in self._zf.infolist()
-        }
+            raise FileNotFoundError(f"데이터 경로를 찾을 수 없습니다: {self.zip_path}")
+
+        self._zf: zipfile.ZipFile | None = None
+        self._name_map: dict[str, zipfile.ZipInfo | Path]
+        if self.zip_path.is_dir():
+            air_squat_dir = self._find_air_squat_dir(self.zip_path)
+            files = sorted(
+                (path for path in air_squat_dir.rglob("*") if path.is_file()),
+                key=lambda path: path.relative_to(air_squat_dir).as_posix(),
+            )
+            self._name_map = {
+                f"{_AIR_SQUAT_PREFIX}/{path.relative_to(air_squat_dir).as_posix()}": path
+                for path in files
+            }
+        else:
+            self._zf = zipfile.ZipFile(self.zip_path)
+            self._name_map = {
+                decode_name(zi.filename): zi for zi in self._zf.infolist()
+            }
+
+    @staticmethod
+    def _find_air_squat_dir(source_dir: Path) -> Path:
+        candidates = []
+        if source_dir.name == "에어스쿼트":
+            candidates.append(source_dir)
+        candidates.extend(
+            [
+                source_dir / "에어스쿼트",
+                source_dir / "스쿼트" / "에어스쿼트",
+            ]
+        )
+        for candidate in candidates:
+            if candidate.is_dir():
+                return candidate
+        raise FileNotFoundError(
+            "추출 데이터에서 에어스쿼트 디렉터리를 찾을 수 없습니다: "
+            f"{source_dir}"
+        )
 
     def close(self) -> None:
-        self._zf.close()
+        if self._zf is not None:
+            self._zf.close()
 
     def __enter__(self) -> "AiHubZip":
         return self
@@ -86,10 +131,14 @@ class AiHubZip:
 
     def _read(self, decoded_path: str) -> bytes:
         try:
-            zi = self._name_map[decoded_path]
+            entry = self._name_map[decoded_path]
         except KeyError as e:
-            raise FileNotFoundError(f"zip 내부 경로를 찾을 수 없습니다: {decoded_path}") from e
-        return self._zf.read(zi)
+            raise FileNotFoundError(f"데이터 내부 경로를 찾을 수 없습니다: {decoded_path}") from e
+        if isinstance(entry, Path):
+            return entry.read_bytes()
+        if self._zf is None:  # pragma: no cover - _name_map 구성 불변식 방어
+            raise RuntimeError("zip 데이터 소스가 닫혔거나 초기화되지 않았습니다.")
+        return self._zf.read(entry)
 
     def iter_air_squat_sequences(self) -> Iterator[SequenceKey]:
         """에어스쿼트 하위의 모든 (오류유형/난이도/actor/rep) 시퀀스를 나열한다."""
