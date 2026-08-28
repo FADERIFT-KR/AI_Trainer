@@ -19,15 +19,18 @@ import numpy as np
 import torch
 from PyQt5.QtCore import QThread, pyqtSignal
 
+from ai_trainer.joint_feedback import JointScore, compute_joint_scores
 from ai_trainer.live_pose.mediapipe_pose import MediaPipePoseDetector, PoseBackendError
 from ai_trainer.live_pose.render import draw_2d_pose
 from ai_trainer.live_pose.worker import CameraConfig, _open_camera
 from ai_trainer.lifting_model import TemporalLiftingNet
 from ai_trainer.online_dtw import OnlineSquatSession
 from ai_trainer.reference_db_io import load_reference_db
+from ai_trainer.scoring import PASS_SCORE_THRESHOLD, distance_to_score
 
 from .error_explain import annotate_error
 from .framing_check import check_framing, guide_box as compute_guide_box
+from .joint_overlay import draw_joint_feedback
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_MODEL_PATH = ROOT / "models" / "pose_landmarker_full.task"
@@ -51,6 +54,8 @@ class PipelineStatus:
     rep_count: int
     partial_distance: dict | None  # {"phase":..., "distance_by_class": {...}}
     completed_rep: object | None  # ai_trainer.online_dtw.RepResult
+    live_score: float | None  # partial_distance["정상"]을 score_calib으로 환산한 실시간 0~100 유사도(%)
+    joint_scores: list[JointScore] | None  # 관절별 위치/각도 오차 (joint_feedback.compute_joint_scores)
 
 
 class SquatPipelineWorker(QThread):
@@ -96,16 +101,27 @@ class SquatPipelineWorker(QThread):
             db = load_reference_db(DB_DIR)
             score_calib = None
             if OFFLINE_REPORT_PATH.exists():
-                score_calib = json.loads(OFFLINE_REPORT_PATH.read_text(encoding="utf-8"))["score_calibration"]
+                # ground_truth tier 전용 calibration을 쓴다 (아래 3D bridge 설명 참고).
+                score_calib = json.loads(OFFLINE_REPORT_PATH.read_text(encoding="utf-8"))["score_calibration_ground_truth"]
 
+            # 실시간 3D 소스: 자체 학습한 lifting 모델(model) 대신 MediaPipe 자체
+            # world_landmarks를 쓴다 — 실제 아이폰 촬영 영상 검증에서, 학습 분포 밖
+            # 체형/팔자세/화각을 만나면 lifting 모델이 스쿼트 깊이를 심하게 과소평가하는
+            # 것이 확인됐다(2026-08-28. pose_bridge.CommonSkeleton3DBridge 참고). 그래서
+            # 비교 대상도 그 모델이 재현된 "operational" tier가 아니라, 8카메라 삼각측량
+            # 실측 3D인 "ground_truth" tier로 맞춘다 — 둘 다 이제 "실제 3D" 도메인이라
+            # lifting 모델을 거치지 않고도 서로 비교 가능하다. lifting_model은 AI Hub
+            # CSV 기반 오프라인 평가/합성 테스트 경로에서만 여전히 쓰인다(그쪽은 원본
+            # 영상이 없어 2D CSV -> 3D 복원이 유일한 방법).
             session = OnlineSquatSession(
-                model=lifting_model, device=device, db_operational=db["operational"],
+                model=lifting_model, device=device, db_operational=db["ground_truth"],
                 weights_cfg=weights_cfg, score_calib=score_calib,
             )
 
-            from .pose_bridge import CommonSkeletonBridge
+            from .pose_bridge import CommonSkeleton3DBridge, CommonSkeletonBridge
 
             bridge = CommonSkeletonBridge(min_visibility=self.config.confidence)
+            bridge3d = CommonSkeleton3DBridge(min_visibility=self.config.confidence)
 
             detector = MediaPipePoseDetector(
                 self.model_path,
@@ -146,6 +162,8 @@ class SquatPipelineWorker(QThread):
                 pelvis_height = None
                 mean_conf = 0.0
                 n_frozen = 0
+                live_score = None
+                joint_scores = None
                 pose_found = observation is not None
                 framing_ok = False
                 framing_message = "카메라 앞에 서주세요"
@@ -188,9 +206,12 @@ class SquatPipelineWorker(QThread):
                         # 끝나 세션이 명시적으로 시작된 뒤에만 phase/DTW 파이프라인을 진행한다.
                         # 그렇지 않으면 잘못된 프레임이나 아직 자리를 잡는 중인 프레임이 session의
                         # 캘리브레이션/phase 상태기계에 섞여 들어가지 않도록 건너뛴다.
+                        # common2d는 화면에 그릴 위치(말풍선/관절 색상 오버레이)용으로만 쓰고,
+                        # 실제 phase/DTW 판정은 common3d(MediaPipe 자체 3D)로 한다.
                         common2d, frozen_mask, mean_conf = bridge.update(observation.image_landmarks, w, h)
+                        common3d, _frozen3d, _mean_conf3d = bridge3d.update(observation.world_landmarks)
                         n_frozen = int(frozen_mask.sum())
-                        status = session.push_frame(common2d)
+                        status = session.push_frame_3d(common3d)
                         if status is not None and status.get("status") == "ok":
                             phase = status["phase"]
                             partial = status["partial_distance"]
@@ -200,11 +221,28 @@ class SquatPipelineWorker(QThread):
 
                             if partial is not None:
                                 dvals = partial["distance_by_class"]
+                                if score_calib is not None and "정상" in dvals:
+                                    # REP 종료를 기다리지 않고, 진행 중인 phase의 "정상" 대비
+                                    # distance를 그때그때 0~100 유사도로 환산해 실시간으로 보여준다.
+                                    live_score = distance_to_score(dvals["정상"], score_calib)
                                 best_class = min(dvals, key=dvals.get)
-                                if best_class != "정상":
+                                # "정상" 레퍼런스와의 절대 거리가 충분히 가까우면(유사도 %가
+                                # PASS_SCORE_THRESHOLD 이상), 다른 오류 클래스가 근소하게
+                                # 더 가깝다는 이유만으로 오류 말풍선을 띄우지 않는다 —
+                                # judge_label(screens.py)과 동일한 기준으로 통일.
+                                passes = live_score is not None and live_score >= PASS_SCORE_THRESHOLD
+                                if best_class != "정상" and not passes:
                                     # 어떤 오류유형에 가장 가까운지에 따라 관련 관절 옆에 말풍선 설명을 붙인다
                                     # (예: 고관절오류 -> 고관절/상체 근처, claude.md 9장 오류유형별 feature 참고).
                                     annotate_error(video_bgr, common2d, best_class)
+
+                            # 관절별 위치/각도 오차 (DTW와 별개 — "지금 이 순간" 프레임 레벨 피드백).
+                            # session이 subsequence DTW로 찾아준 "지금 프레임에 대응하는 정상
+                            # reference 프레임"(joint_feedback)을 받아 오차만 계산한다.
+                            jf = status["joint_feedback"]
+                            if jf is not None:
+                                joint_scores = compute_joint_scores(jf["user_frame"], jf["ref_frame"])
+                                draw_joint_feedback(video_bgr, common2d, joint_scores)
                 else:
                     video_bgr = display_bgr.copy()
                     cv2.rectangle(video_bgr, (gbox[0], gbox[1]), (gbox[2], gbox[3]), (60, 60, 240), 2)
@@ -223,6 +261,8 @@ class SquatPipelineWorker(QThread):
                         rep_count=len(session.completed_reps),
                         partial_distance=partial,
                         completed_rep=completed,
+                        live_score=live_score,
+                        joint_scores=joint_scores,
                     )
                 )
         except (PoseBackendError, RuntimeError, ValueError, OSError) as error:

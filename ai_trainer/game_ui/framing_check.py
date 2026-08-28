@@ -98,7 +98,12 @@ def check_framing(
         return FramingResult(False, "머리나 발이 화면에 잘려요 — 카메라에서 조금 물러나주세요", box, body_box, low_conf)
 
     if not relax_distance:
-        height_ratio = body_h / height
+        # 짧은 변(가로 webcam이면 height, 세로 iPhone 촬영이면 width) 기준으로 정규화한다.
+        # 그냥 height로 나누면, 같은 실제 거리라도 세로로 찍을 때는 프레임이 훨씬 더
+        # 길쭉해서(천장/바닥 여백이 자연히 늘어나서) 비율이 구조적으로 낮게 나와 계속
+        # "더 가까이 서주세요"로 막히는 문제가 있었다(실사용 iPhone 촬영 영상으로 확인).
+        # 가로 모드에서는 min(width,height)==height라 기존 임계값/동작이 그대로 유지된다.
+        height_ratio = body_h / min(width, height)
         if height_ratio < MIN_BODY_HEIGHT_RATIO:
             return FramingResult(False, "카메라에 조금 더 가까이 서주세요", box, body_box, low_conf)
         if height_ratio > MAX_BODY_HEIGHT_RATIO:

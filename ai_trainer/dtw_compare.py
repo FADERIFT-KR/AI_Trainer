@@ -24,19 +24,30 @@ def load_dtw_config(path: str | Path) -> dict:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
+# class_overrides를 덮어쓰는(=클래스별 판별 특징을 강조하는) "운영용" 프로파일.
+# D는 원래부터 그랬고, F(실사용 기본값)도 포함해야 한다 — 안 그러면 모든 클래스가 동일한
+# 가중치로 비교되어(예: 발뒤꿈치오류 판별에 heel_height/ankle_angle이 거의 반영 안 됨),
+# 실제로는 무관한 공통 스쿼트 형태(깊이/템포) 유사성만으로 오분류가 난다(실사용 확인:
+# 하강/상승 중 엉덩이하방오류·발뒤꿈치오류 오탐 빈발). E/A/B/C는 ablation 비교 목적이므로
+# override를 적용하지 않고 고정 유지한다.
+_CLASS_OVERRIDE_PROFILES = {"D_full_weighted", "F_squat_form_focus"}
+
+
 def resolve_weights(config: dict, weight_profile: str, class_label: str | None) -> dict[str, float]:
-    """weight_profile: 'D_full_weighted' | 'E_full_uniform' | 'A_coords_only' | 'B_angles_only' | 'C_coords_plus_angles'."""
+    """weight_profile: 'D_full_weighted' | 'F_squat_form_focus' | 'E_full_uniform' | 'A_coords_only' | 'B_angles_only' | 'C_coords_plus_angles'."""
     if weight_profile == "D_full_weighted":
         w = dict(config["base_weights"])
-        if class_label and class_label in config["class_overrides"]:
-            w.update(config["class_overrides"][class_label])
-        return w
-    if weight_profile == "E_full_uniform":
+    elif weight_profile == "E_full_uniform":
         return dict(config["uniform_weights"])
-    ablation = config["ablation_configs"].get(weight_profile)
-    if not isinstance(ablation, dict):
-        raise ValueError(f"알 수 없는 weight_profile: {weight_profile}")
-    return {name: ablation.get(name, 0.0) for name in FEATURE_NAMES}
+    else:
+        ablation = config["ablation_configs"].get(weight_profile)
+        if not isinstance(ablation, dict):
+            raise ValueError(f"알 수 없는 weight_profile: {weight_profile}")
+        w = {name: ablation.get(name, 0.0) for name in FEATURE_NAMES}
+
+    if weight_profile in _CLASS_OVERRIDE_PROFILES and class_label and class_label in config["class_overrides"]:
+        w.update(config["class_overrides"][class_label])
+    return w
 
 
 def _dtw_dp(cost: np.ndarray) -> tuple[float, int]:

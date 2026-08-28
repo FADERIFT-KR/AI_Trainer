@@ -30,7 +30,7 @@ from ai_trainer.lifting_model import TemporalLiftingNet  # noqa: E402
 from ai_trainer.phase_features import extract_phase_features  # noqa: E402
 from ai_trainer.phase_segmentation import segment_phases  # noqa: E402
 from ai_trainer.reference_db_io import load_reference_db  # noqa: E402
-from ai_trainer.reference_pipeline import build_operational_reference  # noqa: E402
+from ai_trainer.reference_pipeline import build_ground_truth_reference, build_operational_reference  # noqa: E402
 from ai_trainer.scoring import distance_to_score, fit_score_calibration  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -51,6 +51,33 @@ CLASSES = ["정상", "발뒤꿈치오류", "엉덩이하방오류", "고관절�
 
 def build_query(z: AiHubZip, seq, origin: str, model, device) -> dict | None:
     ref = build_operational_reference(z, seq, origin, model, device)
+    if ref is None or ref.coords.shape[0] < 10:
+        return None
+    feat = extract_all_features(ref.coords)
+    pf = extract_phase_features(ref.coords)
+    bounds = segment_phases(pf).as_dict()
+    return {
+        "feat": feat,
+        "bounds": bounds,
+        "meta": {
+            "actor": seq.actor,
+            "level": seq.level,
+            "true_class": seq.error_type,
+            "rep": seq.rep,
+            "origin": origin,
+            "frame_range": list(ref.frame_range),
+        },
+    }
+
+
+def build_query_gt(z: AiHubZip, seq, origin: str) -> dict | None:
+    """build_query와 동일하지만 lifting 모델을 거치지 않고 8카메라 삼각측량 실측 3D를
+    그대로 쓴다 — 실시간 파이프라인이 이제 자체 lifting 모델 대신 MediaPipe 자체 3D
+    (world_landmarks)를 쓰므로(2026-08-28, 학습 분포 밖 체형/화각에서 lifting 모델이
+    깊이를 심하게 과소평가하는 문제 확인), score_calib도 "실제 3D 대 실제 3D" 도메인으로
+    맞춰야 % 점수가 의미 있다. AI Hub는 CSV만 쓰므로 MediaPipe 자체를 여기서 돌릴 순
+    없지만, 둘 다 "정확한 3D"라는 점에서 lifting 모델 도메인보다는 훨씬 가깝다."""
+    ref = build_ground_truth_reference(z, seq, origin)
     if ref is None or ref.coords.shape[0] < 10:
         return None
     feat = extract_all_features(ref.coords)
@@ -192,7 +219,10 @@ def main() -> None:
     print("\nFeature/weight ablation (A/B/C/D/E) 진행 중...")
     t0 = time.time()
     ablation_report = {}
-    for profile in ["A_coords_only", "B_angles_only", "C_coords_plus_angles", "D_full_weighted", "E_full_uniform"]:
+    for profile in [
+        "A_coords_only", "B_angles_only", "C_coords_plus_angles", "D_full_weighted", "E_full_uniform",
+        "F_squat_form_focus",
+    ]:
         y_true, y_pred = [], []
         for q in queries:
             per_class = classify(q, db["ground_truth"], weights_cfg, profile, top_k=2)
@@ -227,17 +257,45 @@ def main() -> None:
         rng.shuffle(pool)
         calib_seqs.extend(pool[:25])
 
+    # 실서비스(OnlineSquatSession)가 실제로 쓰는 weight_profile로 캘리브레이션해야
+    # score_calib의 lo/hi(distance 스케일)이 앱에서 계산되는 distance와 맞는다.
+    # 예전엔 "D_full_weighted"로 고정되어 있었는데, 그 뒤 default_profile이
+    # F_squat_form_focus로 바뀌면서(팔 관절 raw 좌표/속도 제외) distance 스케일 자체가
+    # 달라져 그대로 두면 % 점수가 틀어진다.
+    calib_profile = weights_cfg["default_profile"]
     normal_d, error_d = [], []
     for os_ in calib_seqs:
         q = build_query(zips[os_.origin], os_.seq, os_.origin, model, device)
         if q is None:
             continue
-        w = resolve_weights(weights_cfg, "D_full_weighted", class_label="정상")
+        w = resolve_weights(weights_cfg, calib_profile, class_label="정상")
         r = multi_reference_distance(q["feat"], q["bounds"], db["operational"]["정상"], w, weights_cfg, top_k=2)
         (normal_d if q["meta"]["true_class"] == "정상" else error_d).append(r["min_distance"])
     calib = fit_score_calibration(np.array(normal_d), np.array(error_d))
-    report["score_calibration"] = {**calib, "n_normal": len(normal_d), "n_error": len(error_d)}
+    report["score_calibration"] = {**calib, "n_normal": len(normal_d), "n_error": len(error_d), "weight_profile": calib_profile}
     print(f"calibration 완료 ({time.time()-t0:.1f}초): lo={calib['lo']:.3f} hi={calib['hi']:.3f}  (n_normal={len(normal_d)}, n_error={len(error_d)})")
+
+    # ---- 5b) score calibration (ground_truth tier 버전) ----
+    # 실시간 파이프라인이 자체 lifting 모델 대신 MediaPipe 자체 3D(world_landmarks)를 쓰도록
+    # 바뀌면서(2026-08-28), 그 경로는 db["operational"]이 아니라 db["ground_truth"]와
+    # 비교한다 — 위 calibration(operational 도메인)을 그대로 쓰면 % 점수가 틀어지므로
+    # ground_truth 도메인 전용 calibration을 별도로 만든다. 쿼리도 lifting 모델을 거치지
+    # 않은 실측 3D(build_query_gt)로 만들어 도메인을 맞춘다.
+    print("\nScore calibration(ground_truth tier)용 계산 중...")
+    t0 = time.time()
+    normal_d_gt, error_d_gt = [], []
+    for os_ in calib_seqs:
+        q = build_query_gt(zips[os_.origin], os_.seq, os_.origin)
+        if q is None:
+            continue
+        w = resolve_weights(weights_cfg, calib_profile, class_label="정상")
+        r = multi_reference_distance(q["feat"], q["bounds"], db["ground_truth"]["정상"], w, weights_cfg, top_k=2)
+        (normal_d_gt if q["meta"]["true_class"] == "정상" else error_d_gt).append(r["min_distance"])
+    calib_gt = fit_score_calibration(np.array(normal_d_gt), np.array(error_d_gt))
+    report["score_calibration_ground_truth"] = {
+        **calib_gt, "n_normal": len(normal_d_gt), "n_error": len(error_d_gt), "weight_profile": calib_profile,
+    }
+    print(f"calibration(GT) 완료 ({time.time()-t0:.1f}초): lo={calib_gt['lo']:.3f} hi={calib_gt['hi']:.3f}  (n_normal={len(normal_d_gt)}, n_error={len(error_d_gt)})")
 
     # ---- 6) 예시 몇 개 (predicted class / raw distance / 주요 error feature) ----
     print("\n예시 Validation 쿼리:")

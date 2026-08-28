@@ -1,0 +1,115 @@
+"""프레임 단위 관절별 자세 오차(위치+각도) 계산 — 실시간 UI 막대바/스켈레톤 색상용.
+
+`online_dtw.OnlineSquatSession`이 이미 계산하는 phase-aware weighted DTW(전체 스쿼트
+시퀀스가 기준 동작과 얼마나 유사한지)와는 역할이 다르다:
+
+    DTW          = "이번 렙(rep) 전체가 기준 동작과 얼마나 비슷한가" (시퀀스 레벨)
+    joint_feedback = "지금 이 순간, 이 관절이 기준 자세에서 얼마나 벗어났는가" (프레임 레벨)
+
+이 모듈은 두 정규화된 3D 프레임(사용자 현재 프레임, 그 프레임에 DTW로 정렬된 reference
+프레임)을 입력받아 관절별 오차만 계산한다 — "지금 프레임에 대응하는 reference 프레임이
+무엇인지" 찾는 정렬 자체는 `online_dtw.OnlineSquatSession._joint_feedback_frame()`의
+책임이다(서브시퀀스 DTW의 종점 탐색을 재사용).
+
+좌표는 이미 Hip-center + Scale + Orientation 정규화가 끝난 공통 좌표계(leg_length
+단위, `features.py`/`reference_pipeline.py`와 동일)를 사용하므로, 카메라와의 거리나
+사용자 키 차이로 오차가 부풀려지지 않는다. 절대 raw 픽셀 좌표를 쓰지 않는다.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import numpy as np
+
+from .common_skeleton import COMMON_JOINT_NAMES
+
+_IDX = {name: i for i, name in enumerate(COMMON_JOINT_NAMES)}
+
+# 관절별 각도 정의: (끝점 A, 각도의 꼭짓점, 끝점 B).
+#   무릎 = Hip-Knee-Ankle (요청사항)
+#   고관절 = Shoulder-Hip-Knee (요청사항 — DTW의 hip_flexion_angle(Neck 기준)과는 다름,
+#            여기서는 좌우 각각 어깨를 기준으로 써서 좌우 비대칭도 잡아낼 수 있게 함)
+#   어깨 = Hip-Shoulder-Elbow (상완이 몸통 대비 얼마나 앞/뒤로 나갔는지)
+TRACKED_JOINTS: dict[str, tuple[str, str, str]] = {
+    "Left Knee": ("LHip", "LKnee", "LAnkle"),
+    "Right Knee": ("RHip", "RKnee", "RAnkle"),
+    "Left Hip": ("LShoulder", "LHip", "LKnee"),
+    "Right Hip": ("RShoulder", "RHip", "RKnee"),
+    "Left Shoulder": ("LHip", "LShoulder", "LElbow"),
+    "Right Shoulder": ("RHip", "RShoulder", "RElbow"),
+}
+
+# ============================================================
+# 튜닝 파라미터 — 색상 기준/가중치를 바꾸고 싶으면 이 블록만 수정하면 된다.
+# ============================================================
+POSITION_WEIGHT = 0.4  # joint_score에서 위치 오차가 차지하는 비중
+ANGLE_WEIGHT = 0.6  # joint_score에서 각도 오차가 차지하는 비중 (POSITION_WEIGHT와 합이 1이 되도록 유지 권장)
+
+# 위치오차(leg_length 단위)가 이 값 이상이면 정규화 오차 1.0(최댓값)으로 클램프.
+# leg_length=1.0을 대략 "허벅지 길이"로 볼 때, 0.25는 그 1/4 정도 어긋나면 최댓값이라는 뜻.
+POSITION_ERROR_SCALE = 0.25
+# 각도오차(도, degree)가 이 값 이상이면 정규화 오차 1.0으로 클램프.
+ANGLE_ERROR_SCALE = 45.0
+
+# 최종 0~1 joint_score 판정 기준 (0.05 = 5%).
+GREEN_THRESHOLD = 0.05
+YELLOW_THRESHOLD = 0.10
+# ============================================================
+
+STATUS_GOOD, STATUS_WARNING, STATUS_BAD = "good", "warning", "bad"
+
+
+@dataclass(frozen=True)
+class JointScore:
+    name: str  # 표시용 이름 ("Left Knee" 등)
+    common_joint: str  # COMMON_JOINT_NAMES 상의 꼭짓점 이름 (스켈레톤에 그릴 때 위치 참조용)
+    position_error: float  # raw, leg_length 단위
+    angle_error_deg: float  # raw, degree
+    score: float  # 0~1 정규화된 최종 오차 (낮을수록 좋음)
+    status: str  # STATUS_GOOD | STATUS_WARNING | STATUS_BAD
+
+
+def _angle_deg(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> float:
+    """b를 꼭짓점으로 하는 a-b-c 각도(도)."""
+    v1, v2 = a - b, c - b
+    n1, n2 = np.linalg.norm(v1), np.linalg.norm(v2)
+    cos = float(np.dot(v1, v2) / (n1 * n2 + 1e-8))
+    return float(np.degrees(np.arccos(np.clip(cos, -1.0, 1.0))))
+
+
+def _status_for(score: float) -> str:
+    if score <= GREEN_THRESHOLD:
+        return STATUS_GOOD
+    if score <= YELLOW_THRESHOLD:
+        return STATUS_WARNING
+    return STATUS_BAD
+
+
+def compute_joint_scores(user_frame: np.ndarray, ref_frame: np.ndarray) -> list[JointScore]:
+    """user_frame/ref_frame: (18,3) 정규화 완료 좌표. 두 프레임은 이미 "같은 순간"으로
+    정렬되어 있다고 가정한다(정렬 자체는 이 함수의 책임이 아님).
+
+    joint_error(위치) = ||normalized_user_joint - normalized_reference_joint||
+    joint_score = position_error_norm * POSITION_WEIGHT + angle_error_norm * ANGLE_WEIGHT
+    """
+    scores: list[JointScore] = []
+    for name, (a_name, vertex_name, b_name) in TRACKED_JOINTS.items():
+        vi = _IDX[vertex_name]
+        pos_err = float(np.linalg.norm(user_frame[vi] - ref_frame[vi]))
+
+        ai, bi = _IDX[a_name], _IDX[b_name]
+        user_angle = _angle_deg(user_frame[ai], user_frame[vi], user_frame[bi])
+        ref_angle = _angle_deg(ref_frame[ai], ref_frame[vi], ref_frame[bi])
+        angle_err = abs(user_angle - ref_angle)
+
+        pos_norm = min(1.0, pos_err / POSITION_ERROR_SCALE)
+        angle_norm = min(1.0, angle_err / ANGLE_ERROR_SCALE)
+        score = float(np.clip(POSITION_WEIGHT * pos_norm + ANGLE_WEIGHT * angle_norm, 0.0, 1.0))
+
+        scores.append(
+            JointScore(
+                name=name, common_joint=vertex_name, position_error=pos_err,
+                angle_error_deg=angle_err, score=score, status=_status_for(score),
+            )
+        )
+    return scores
