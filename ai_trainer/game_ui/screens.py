@@ -36,6 +36,9 @@ PHASE_LABEL_KR = {"prep": "준비", "descend": "하강", "bottom": "최저점", 
 # 판정 클래스만 보여주던 때(1200ms)보다 늘림.
 REP_POPUP_DURATION_MS = 2000
 
+# 한 세션(게임 한 판)에서 몇 REP를 채우면 결과 화면을 띄울지.
+TARGET_REPS = 5
+
 # RepResult.top_contributing_features(dtw_compare.py FEATURE_NAMES 코드명)를 사람이
 #읽을 수 있는 한국어로 바꿔서 "왜 이 판정이 나왔는지" 근거를 보여줄 때 쓴다
 # (실사용 피드백: "고관절오류 근거를 알아야 진짜인지 확인할 수 있다").
@@ -339,10 +342,62 @@ class CompareScreen(QWidget):
         self._ref_playback_timer.setInterval(int(1000 / REFERENCE_FPS))
         self._ref_playback_timer.timeout.connect(self._advance_reference_panel)
 
+        # TARGET_REPS(=5)를 채우면 뜨는 "게임 완료" 결과 화면 — 확인을 누르기 전까지는
+        # 안 사라진다(요청사항). 재시도 버튼으로 같은 설정(class/난이도)으로 바로 재시작.
+        self._session_reps: list = []  # 이번 세션에서 끝난 RepResult들(online_dtw.RepResult)
+        self._last_class_label: str | None = None
+        self._last_medoid_rank: int = 0
+
+        self.game_result_panel = QWidget(self)
+        self.game_result_panel.setStyleSheet(
+            "QWidget#gameResultCard { background: rgba(15,20,28,240); border: 2px solid #4c8bff; "
+            "border-radius: 20px; }"
+        )
+        self.game_result_panel.setObjectName("gameResultCard")
+        gr_layout = QVBoxLayout(self.game_result_panel)
+        gr_layout.setContentsMargins(28, 24, 28, 20)
+        gr_layout.setSpacing(12)
+
+        self.game_result_title = QLabel(f"🏁 {TARGET_REPS}회 완료!")
+        self.game_result_title.setAlignment(Qt.AlignCenter)
+        self.game_result_title.setStyleSheet("font-size: 28px; font-weight: 800; color: #e7ecf4;")
+        gr_layout.addWidget(self.game_result_title)
+
+        self.game_result_body = QLabel("")
+        self.game_result_body.setAlignment(Qt.AlignCenter)
+        self.game_result_body.setWordWrap(True)
+        self.game_result_body.setStyleSheet("font-size: 14px; color: #cfd6e2;")
+        gr_layout.addWidget(self.game_result_body, 1)
+
+        gr_buttons = QHBoxLayout()
+        gr_buttons.setSpacing(12)
+        self.retry_btn = QPushButton("🔁 재시도")
+        self.retry_btn.setMinimumHeight(44)
+        self.retry_btn.setStyleSheet(
+            "QPushButton { font-size: 15px; font-weight: 600; border-radius: 8px; "
+            "background: #232a38; color: #cfd6e2; border: 1px solid #343c4b; }"
+            "QPushButton:hover { background: #2c3444; }"
+        )
+        self.retry_btn.clicked.connect(self._on_retry_clicked)
+        self.confirm_btn = QPushButton("확인")
+        self.confirm_btn.setMinimumHeight(44)
+        self.confirm_btn.setStyleSheet(
+            "QPushButton { font-size: 15px; font-weight: 700; border-radius: 8px; "
+            "background: #2f6feb; color: white; }"
+            "QPushButton:hover { background: #4c8bff; }"
+        )
+        self.confirm_btn.clicked.connect(self._on_confirm_clicked)
+        gr_buttons.addWidget(self.retry_btn)
+        gr_buttons.addWidget(self.confirm_btn)
+        gr_layout.addLayout(gr_buttons)
+
+        self.game_result_panel.hide()
+
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 (Qt override)
         super().resizeEvent(event)
         self._position_countdown_label()
         self._position_rep_popup_label()
+        self._position_game_result_panel()
 
     def _position_countdown_label(self) -> None:
         w, h = 340, 240
@@ -351,6 +406,10 @@ class CompareScreen(QWidget):
     def _position_rep_popup_label(self) -> None:
         w, h = 480, 210
         self.rep_popup_label.setGeometry((self.width() - w) // 2, (self.height() - h) // 2, w, h)
+
+    def _position_game_result_panel(self) -> None:
+        w, h = 640, 480
+        self.game_result_panel.setGeometry((self.width() - w) // 2, (self.height() - h) // 2, w, h)
 
     @staticmethod
     def _panel(title: str, image: ImagePanel) -> QGroupBox:
@@ -402,6 +461,7 @@ class CompareScreen(QWidget):
         # 8카메라 삼각측량 실측 3D) 사용 — 실시간 3D 소스가 자체 lifting 모델(camera1 단일뷰
         # 근사)에서 MediaPipe 자체 world_landmarks로 바뀌면서(2026-08-28), 비교 대상도 그
         # lifting 모델이 재현된 Operational 계층이 아니라 이 실측 계층으로 함께 맞췄다.
+        self._last_class_label, self._last_medoid_rank = class_label, medoid_rank  # 재시도 버튼용
         self.ref_track = ReferenceTrack(class_label=class_label, medoid_rank=medoid_rank, tier="ground_truth")
         self._ref_tf = fit_transform(self.ref_track.coords[:, :, [0, 1]], REF_PANEL_W, REF_PANEL_H, flip_y=True)
 
@@ -413,6 +473,8 @@ class CompareScreen(QWidget):
         self.countdown_label.hide()
         self._rep_popup_timer.stop()
         self.rep_popup_label.hide()
+        self.game_result_panel.hide()
+        self._session_reps = []
         self.result_label.setText("")
         self.overall_score_label.setText("-")
         for row in self._joint_rows.values():
@@ -434,6 +496,7 @@ class CompareScreen(QWidget):
         self._rep_popup_timer.stop()
         self.countdown_label.hide()
         self.rep_popup_label.hide()
+        self.game_result_panel.hide()
         if self.worker is not None and self.worker.isRunning():
             self.worker.requestInterruption()
             self.worker.wait(5000)
@@ -663,12 +726,45 @@ class CompareScreen(QWidget):
                 f"주요 원인: {', '.join(feature_labels)}\n"
                 f"관절별 근거: {joint_summary}"
             )
-            if display_class == "정상":
+            self._session_reps.append({"index": r.rep_index, "display_class": display_class, "score_text": score_text})
+
+            if len(self._session_reps) >= TARGET_REPS:
+                # TARGET_REPS(=5)를 채웠다 — 매 REP마다 뜨던 작은 팝업 대신, 확인을 누를
+                # 때까지 안 사라지는 최종 결과 화면으로 넘어간다(요청사항).
+                self._show_game_result()
+            elif display_class == "정상":
                 self._show_rep_popup(f"성공! 👍\n{score_text}", "good")
             else:
                 failing = [js.name for js in (self._latest_joint_scores or []) if not js.within_angle_tolerance]
                 reason = f"{failing[0]} 등 {len(failing)}개 관절 벗어남" if failing else feature_labels[0] if feature_labels else ""
                 self._show_rep_popup(f"REP {r.rep_index + 1} 완료\n{display_class}\n{reason}", "bad")
+
+    def _show_game_result(self) -> None:
+        """TARGET_REPS(=5)를 채운 뒤 뜨는 결과 화면. 확인 버튼을 누르기 전까지 남아있고
+        (요청사항), 카메라/레퍼런스 재생은 멈춰서 화면이 계속 바뀌지 않게 한다."""
+        if self.worker is not None and self.worker.isRunning():
+            self.worker.requestInterruption()
+            self.worker.wait(5000)
+        self.worker = None
+        self._ref_playback_timer.stop()
+        self._rep_popup_timer.stop()
+        self.rep_popup_label.hide()
+
+        n_pass = sum(1 for rep in self._session_reps if rep["display_class"] == "정상")
+        lines = [f"REP {rep['index'] + 1}: {rep['display_class']} ({rep['score_text']})" for rep in self._session_reps]
+        self.game_result_body.setText(f"정상 {n_pass} / {TARGET_REPS}\n\n" + "\n".join(lines))
+        self._position_game_result_panel()
+        self.game_result_panel.show()
+        self.game_result_panel.raise_()
+
+    def _on_retry_clicked(self) -> None:
+        self.game_result_panel.hide()
+        if self._last_class_label is not None:
+            self.start(self._last_class_label, self._last_medoid_rank)
+
+    def _on_confirm_clicked(self) -> None:
+        self.game_result_panel.hide()
+        self._on_back()
 
     def _on_error(self, message: str) -> None:
         self.status_label.setText(f"오류: {message}")
