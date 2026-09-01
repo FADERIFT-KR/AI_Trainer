@@ -244,7 +244,7 @@ class SquatPipelineWorker(QThread):
                             # reference 프레임"(joint_feedback)을 받아 오차만 계산한다.
                             jf = status["joint_feedback"]
                             if jf is not None:
-                                joint_scores = compute_joint_scores(jf["user_frame"], jf["ref_frame"])
+                                joint_scores = compute_joint_scores(jf["user_frame"], jf["ref_frame"], phase=jf["phase"])
                                 draw_joint_feedback(video_bgr, common2d, joint_scores)
                 else:
                     video_bgr = display_bgr.copy()

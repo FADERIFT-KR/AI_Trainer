@@ -1,0 +1,129 @@
+{
+  "description": "관절별 '합격 범위' 허용오차(도). AI Hub '정상' train 시퀀스의 관절 각도가 phase 진행률상 같은 순간에 배우들 사이에서 실제로 얼마나 벌어지는지(10~90퍼센타일 폭의 절반)로 계산 — 2026-08-28 이전에 쓰던 고정값(모든 phase/관절 공통 15도)은 실측 통계가 아니라 어림값이었음.",
+  "method": "정상(train) 시퀀스 -> phase 분할 -> 진행률 0~100%(K=20)로 리샘플 -> 진행률 지점별 배우간 각도 10~90퍼센타일 폭의 median의 절반",
+  "n_sequences": 129,
+  "tolerance_deg": {
+    "준비": {
+      "Left Knee": 3.2,
+      "Right Knee": 5.6,
+      "Left Hip": 5.7,
+      "Right Hip": 4.3
+    },
+    "하강": {
+      "Left Knee": 13.0,
+      "Right Knee": 14.2,
+      "Left Hip": 10.5,
+      "Right Hip": 12.0
+    },
+    "최저점": {
+      "Left Knee": 15.4,
+      "Right Knee": 14.8,
+      "Left Hip": 10.1,
+      "Right Hip": 9.8
+    },
+    "상승": {
+      "Left Knee": 20.1,
+      "Right Knee": 21.4,
+      "Left Hip": 19.1,
+      "Right Hip": 18.1
+    },
+    "종료": {
+      "Left Knee": 3.6,
+      "Right Knee": 4.9,
+      "Left Hip": 6.2,
+      "Right Hip": 5.5
+    }
+  },
+  "detail": {
+    "준비": {
+      "Left Knee": {
+        "n_seq": 104,
+        "median_p10_p90_range_deg": 6.5
+      },
+      "Right Knee": {
+        "n_seq": 104,
+        "median_p10_p90_range_deg": 11.2
+      },
+      "Left Hip": {
+        "n_seq": 104,
+        "median_p10_p90_range_deg": 11.3
+      },
+      "Right Hip": {
+        "n_seq": 104,
+        "median_p10_p90_range_deg": 8.6
+      }
+    },
+    "하강": {
+      "Left Knee": {
+        "n_seq": 129,
+        "median_p10_p90_range_deg": 26.0
+      },
+      "Right Knee": {
+        "n_seq": 129,
+        "median_p10_p90_range_deg": 28.4
+      },
+      "Left Hip": {
+        "n_seq": 129,
+        "median_p10_p90_range_deg": 21.0
+      },
+      "Right Hip": {
+        "n_seq": 129,
+        "median_p10_p90_range_deg": 23.9
+      }
+    },
+    "최저점": {
+      "Left Knee": {
+        "n_seq": 129,
+        "median_p10_p90_range_deg": 30.9
+      },
+      "Right Knee": {
+        "n_seq": 129,
+        "median_p10_p90_range_deg": 29.7
+      },
+      "Left Hip": {
+        "n_seq": 129,
+        "median_p10_p90_range_deg": 20.1
+      },
+      "Right Hip": {
+        "n_seq": 129,
+        "median_p10_p90_range_deg": 19.7
+      }
+    },
+    "상승": {
+      "Left Knee": {
+        "n_seq": 129,
+        "median_p10_p90_range_deg": 40.2
+      },
+      "Right Knee": {
+        "n_seq": 129,
+        "median_p10_p90_range_deg": 42.9
+      },
+      "Left Hip": {
+        "n_seq": 129,
+        "median_p10_p90_range_deg": 38.1
+      },
+      "Right Hip": {
+        "n_seq": 129,
+        "median_p10_p90_range_deg": 36.3
+      }
+    },
+    "종료": {
+      "Left Knee": {
+        "n_seq": 117,
+        "median_p10_p90_range_deg": 7.3
+      },
+      "Right Knee": {
+        "n_seq": 117,
+        "median_p10_p90_range_deg": 9.8
+      },
+      "Left Hip": {
+        "n_seq": 117,
+        "median_p10_p90_range_deg": 12.5
+      },
+      "Right Hip": {
+        "n_seq": 117,
+        "median_p10_p90_range_deg": 11.1
+      }
+    }
+  }
+}
