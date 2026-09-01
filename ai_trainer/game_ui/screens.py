@@ -19,7 +19,7 @@ from PyQt5.QtWidgets import (
 )
 
 from ai_trainer.common_skeleton import COMMON_BONE_COLORS_BGR, COMMON_BONE_INDEX_PAIRS
-from ai_trainer.joint_feedback import STATUS_BAD, STATUS_GOOD, STATUS_WARNING, TRACKED_JOINTS
+from ai_trainer.joint_feedback import ANGLE_TOLERANCE_DEG, STATUS_BAD, STATUS_GOOD, STATUS_WARNING, JointScore, TRACKED_JOINTS
 from ai_trainer.live_pose.window import ImagePanel
 from ai_trainer.live_pose.worker import CameraConfig
 from ai_trainer.render import draw_skeleton_panel, fit_transform
@@ -32,13 +32,43 @@ REF_PANEL_W, REF_PANEL_H = 480, 480
 
 PHASE_LABEL_KR = {"prep": "준비", "descend": "하강", "bottom": "최저점", "ascend": "상승", None: "-"}
 
-# REP 완료 알림이 화면 중앙에 떠 있는 시간(ms).
-REP_POPUP_DURATION_MS = 1200
+# REP 완료 알림이 화면 중앙에 떠 있는 시간(ms). 근거 문구까지 읽을 시간을 주기 위해
+# 판정 클래스만 보여주던 때(1200ms)보다 늘림.
+REP_POPUP_DURATION_MS = 2000
+
+# RepResult.top_contributing_features(dtw_compare.py FEATURE_NAMES 코드명)를 사람이
+#읽을 수 있는 한국어로 바꿔서 "왜 이 판정이 나왔는지" 근거를 보여줄 때 쓴다
+# (실사용 피드백: "고관절오류 근거를 알아야 진짜인지 확인할 수 있다").
+FEATURE_LABEL_KR = {
+    "joint_coords_3d": "전신 좌표",
+    "knee_flexion_angle": "무릎 굽힘 정도",
+    "hip_flexion_angle": "고관절 굽힘 정도(허리 숙임)",
+    "ankle_angle": "발목 각도",
+    "torso_inclination": "상체 기울기",
+    "bone_direction_vectors": "몸통/다리 방향",
+    "joint_velocity": "움직임 속도",
+    "pelvis_trajectory": "골반 높이/속도(스쿼트 깊이)",
+    "heel_height": "뒤꿈치 들림",
+    "knee_toe_alignment": "무릎-발끝 정렬",
+    "left_right_asymmetry": "좌우 비대칭",
+}
 
 # 관절별 오차 막대(JointBarRow) 색상/라벨 — joint_feedback.py의 GREEN/YELLOW_THRESHOLD로
 # 판정된 status 문자열("good"/"warning"/"bad")을 화면에 표시할 때 쓴다.
 _JOINT_STATUS_COLOR = {STATUS_GOOD: "#72df8d", STATUS_WARNING: "#f2bd61", STATUS_BAD: "#ff7b7b"}
 _JOINT_STATUS_LABEL = {STATUS_GOOD: "GOOD", STATUS_WARNING: "WARNING", STATUS_BAD: "BAD"}
+
+
+def joint_detail_text(js: JointScore) -> str:
+    """"몇 도까지가 합격인데 얼마나 벗어났는지"를 그대로 문장으로 만든다.
+
+    예: "104° (합격범위 70~100°, 4° 초과)" / "72° (합격범위 60~90°, 합격)".
+    joint_feedback.ANGLE_TOLERANCE_DEG가 합격범위 폭을 결정한다."""
+    lo, hi = js.tolerance_range_deg
+    if js.within_angle_tolerance:
+        return f"{js.user_angle_deg:.0f}° (합격범위 {lo:.0f}~{hi:.0f}°, 합격)"
+    over = js.angle_error_deg - ANGLE_TOLERANCE_DEG
+    return f"{js.user_angle_deg:.0f}° (합격범위 {lo:.0f}~{hi:.0f}°, {over:.0f}° 초과)"
 
 
 class JointBarRow(QWidget):
@@ -73,6 +103,13 @@ class JointBarRow(QWidget):
         self._set_bar_color(_JOINT_STATUS_COLOR[STATUS_GOOD])
         layout.addWidget(self._bar)
 
+        # "몇 도까지가 합격인데 얼마나 벗어났는지" — 판정 근거를 숫자로 바로 보여준다
+        # (실사용 피드백: 판정만 보여주지 말고 근거 각도를 같이 보여달라는 요청 대응).
+        self._detail_label = QLabel("-")
+        self._detail_label.setStyleSheet("font-size: 10px; color: #8f9aaa;")
+        self._detail_label.setWordWrap(True)
+        layout.addWidget(self._detail_label)
+
     def _set_bar_color(self, hex_color: str) -> None:
         self._bar.setStyleSheet(
             "QProgressBar { border: 1px solid #343c4b; border-radius: 4px; background: #1a1f29; "
@@ -80,13 +117,14 @@ class JointBarRow(QWidget):
             f"QProgressBar::chunk {{ background-color: {hex_color}; border-radius: 4px; }}"
         )
 
-    def update_score(self, score: float, status: str) -> None:
-        pct = int(round(score * 100))
+    def update_score(self, js: JointScore) -> None:
+        pct = int(round(js.score * 100))
         self._bar.setValue(min(100, max(0, pct)))
-        self._bar.setFormat(f"{score * 100:.1f}%")
-        self._set_bar_color(_JOINT_STATUS_COLOR.get(status, "#8f9aaa"))
-        self._status_label.setText(_JOINT_STATUS_LABEL.get(status, "-"))
-        self._status_label.setStyleSheet(f"font-size: 12px; font-weight: 700; color: {_JOINT_STATUS_COLOR.get(status, '#8f9aaa')};")
+        self._bar.setFormat(f"{js.score * 100:.1f}%")
+        self._set_bar_color(_JOINT_STATUS_COLOR.get(js.status, "#8f9aaa"))
+        self._status_label.setText(_JOINT_STATUS_LABEL.get(js.status, "-"))
+        self._status_label.setStyleSheet(f"font-size: 12px; font-weight: 700; color: {_JOINT_STATUS_COLOR.get(js.status, '#8f9aaa')};")
+        self._detail_label.setText(joint_detail_text(js))
 
     def clear(self) -> None:
         self._bar.setValue(0)
@@ -94,6 +132,7 @@ class JointBarRow(QWidget):
         self._set_bar_color("#343c4b")
         self._status_label.setText("-")
         self._status_label.setStyleSheet("font-size: 12px; color: #8f9aaa;")
+        self._detail_label.setText("-")
 
 # 화각이 이만큼(초) 연속으로 안정적으로 좋아야 3-2-1 카운트다운을 자동 시작한다.
 # 순간적인 흔들림으로 바로 시작해버리는 것을 막기 위한 디바운스.
@@ -245,6 +284,7 @@ class CompareScreen(QWidget):
         self.result_label = QLabel("")
         self.result_label.setAlignment(Qt.AlignCenter)
         self.result_label.setStyleSheet("font-size: 14px; color: #8f9aaa;")
+        self.result_label.setWordWrap(True)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 12, 14, 12)
@@ -285,6 +325,7 @@ class CompareScreen(QWidget):
         # 동작 중엔 그대로 두고, 대신 "끝났다"는 확실한 순간을 하나 크게 짚어준다.
         self.rep_popup_label = QLabel("", self)
         self.rep_popup_label.setAlignment(Qt.AlignCenter)
+        self.rep_popup_label.setWordWrap(True)
         self.rep_popup_label.hide()
 
         self._rep_popup_timer = QTimer(self)
@@ -308,7 +349,7 @@ class CompareScreen(QWidget):
         self.countdown_label.setGeometry((self.width() - w) // 2, (self.height() - h) // 2, w, h)
 
     def _position_rep_popup_label(self) -> None:
-        w, h = 420, 160
+        w, h = 480, 210
         self.rep_popup_label.setGeometry((self.width() - w) // 2, (self.height() - h) // 2, w, h)
 
     @staticmethod
@@ -351,6 +392,7 @@ class CompareScreen(QWidget):
             row = JointBarRow(joint_name)
             self._joint_rows[joint_name] = row
             v.addWidget(row)
+        self._latest_joint_scores: list[JointScore] | None = None
 
         v.addStretch(1)
         return group
@@ -375,6 +417,7 @@ class CompareScreen(QWidget):
         self.overall_score_label.setText("-")
         for row in self._joint_rows.values():
             row.clear()
+        self._latest_joint_scores = None
 
         self.worker = SquatPipelineWorker(config=CameraConfig())
         self.worker.status_ready.connect(self._on_status)
@@ -483,7 +526,8 @@ class CompareScreen(QWidget):
         동작 중 계속 바뀌는 judge_label과 별개로, "끝났다"는 순간 하나를 확실히 짚어준다."""
         self.rep_popup_label.setText(text)
         self.rep_popup_label.setStyleSheet(
-            "font-size: 44px; font-weight: 800; border-radius: 20px; " + self._REP_POPUP_STYLES[kind]
+            "font-size: 26px; font-weight: 800; border-radius: 20px; padding: 10px; "
+            + self._REP_POPUP_STYLES[kind]
         )
         self._position_rep_popup_label()
         self.rep_popup_label.show()
@@ -502,11 +546,12 @@ class CompareScreen(QWidget):
             self.overall_score_label.setText("-")
 
         if status.joint_scores:
+            self._latest_joint_scores = status.joint_scores  # REP 완료 팝업/결과 문구에서 재사용
             scores_by_name = {js.name: js for js in status.joint_scores}
             for joint_name, row in self._joint_rows.items():
                 js = scores_by_name.get(joint_name)
                 if js is not None:
-                    row.update_score(js.score, js.status)
+                    row.update_score(js)
                 else:
                     row.clear()
         else:
@@ -605,14 +650,25 @@ class CompareScreen(QWidget):
             else:
                 display_class = r.predicted_class
                 confidence_note = "" if margin > JUDGE_MARGIN_THRESHOLD else " (근소한 차이 — 참고용)"
+
+            # 판정 근거: DTW가 실제로 비교에 쓴 요소(코드명 -> 한국어) + 관절별 실측
+            # 각도/합격범위/초과분. "왜 이 판정이 나왔는지 숫자로 보여달라"는 실사용
+            # 피드백 대응 — judge_label/팝업의 클래스명만으론 검증할 방법이 없었다.
+            feature_labels = [FEATURE_LABEL_KR.get(name, name) for name, _ in r.top_contributing_features]
+            joint_lines = [f"{js.name} {joint_detail_text(js)}" for js in (self._latest_joint_scores or [])]
+            joint_summary = "  |  ".join(joint_lines) if joint_lines else "-"
+
             self.result_label.setText(
                 f"REP 종료 → 판정: {display_class}{confidence_note}  |  유사도: {score_text}  |  "
-                f"주요 특징: {', '.join(name for name, _ in r.top_contributing_features)}"
+                f"주요 원인: {', '.join(feature_labels)}\n"
+                f"관절별 근거: {joint_summary}"
             )
             if display_class == "정상":
                 self._show_rep_popup(f"성공! 👍\n{score_text}", "good")
             else:
-                self._show_rep_popup(f"REP {r.rep_index + 1} 완료\n{display_class}", "bad")
+                failing = [js.name for js in (self._latest_joint_scores or []) if not js.within_angle_tolerance]
+                reason = f"{failing[0]} 등 {len(failing)}개 관절 벗어남" if failing else feature_labels[0] if feature_labels else ""
+                self._show_rep_popup(f"REP {r.rep_index + 1} 완료\n{display_class}\n{reason}", "bad")
 
     def _on_error(self, message: str) -> None:
         self.status_label.setText(f"오류: {message}")

@@ -66,6 +66,13 @@ ANGLE_ERROR_SCALE = 45.0
 # 최종 0~1 joint_score 판정 기준.
 GREEN_THRESHOLD = 0.08
 YELLOW_THRESHOLD = 0.18
+
+# "합격 범위"로 화면에 보여줄 각도 허용 오차(도). ref_angle(정상 레퍼런스 각도) ±
+# 이 값을 "정상 범위"로 표시한다 — 실측(아이폰 영상)에서 무릎 각도오차 0.5~7도는
+# 명백히 정확한 자세였고, 30도 이상은 명백히 벗어난 자세였던 것을 기준으로 그 사이
+# 값으로 잡은 초기값이다(GREEN/YELLOW_THRESHOLD의 각도 성분과 별개로, "몇 도까지가
+# 합격인지"를 사람이 바로 읽을 수 있는 형태로 노출하기 위한 값 — 실사용 피드백 대응).
+ANGLE_TOLERANCE_DEG = 15.0
 # ============================================================
 
 STATUS_GOOD, STATUS_WARNING, STATUS_BAD = "good", "warning", "bad"
@@ -77,8 +84,19 @@ class JointScore:
     common_joint: str  # COMMON_JOINT_NAMES 상의 꼭짓점 이름 (스켈레톤에 그릴 때 위치 참조용)
     position_error: float  # raw, leg_length 단위
     angle_error_deg: float  # raw, degree
+    user_angle_deg: float  # 지금 사용자 각도(도)
+    ref_angle_deg: float  # 정렬된 "정상" 레퍼런스 프레임의 각도(도) — 합격 범위의 중심
     score: float  # 0~1 정규화된 최종 오차 (낮을수록 좋음)
     status: str  # STATUS_GOOD | STATUS_WARNING | STATUS_BAD
+
+    @property
+    def tolerance_range_deg(self) -> tuple[float, float]:
+        """"합격"으로 볼 각도 범위(ref_angle_deg ± ANGLE_TOLERANCE_DEG)."""
+        return self.ref_angle_deg - ANGLE_TOLERANCE_DEG, self.ref_angle_deg + ANGLE_TOLERANCE_DEG
+
+    @property
+    def within_angle_tolerance(self) -> bool:
+        return self.angle_error_deg <= ANGLE_TOLERANCE_DEG
 
 
 def _angle_deg(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> float:
@@ -121,7 +139,8 @@ def compute_joint_scores(user_frame: np.ndarray, ref_frame: np.ndarray) -> list[
         scores.append(
             JointScore(
                 name=name, common_joint=vertex_name, position_error=pos_err,
-                angle_error_deg=angle_err, score=score, status=_status_for(score),
+                angle_error_deg=angle_err, user_angle_deg=user_angle, ref_angle_deg=ref_angle,
+                score=score, status=_status_for(score),
             )
         )
     return scores
