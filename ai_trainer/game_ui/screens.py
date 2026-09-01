@@ -252,6 +252,7 @@ class CompareScreen(QWidget):
         self.ref_track: ReferenceTrack | None = None
 
         self.camera_panel = ImagePanel("카메라 준비 중…")
+        self.my_skeleton_panel = ImagePanel("스켈레톤 준비 중…")
         self.ref_panel = ImagePanel("레퍼런스 준비 중…")
 
         self.status_label = QLabel("초기화 중…")
@@ -274,6 +275,7 @@ class CompareScreen(QWidget):
         views = QHBoxLayout()
         views.setSpacing(12)
         views.addWidget(self._panel("웹캠 · 내 자세", self.camera_panel), 1)
+        views.addWidget(self._panel("내 3D 스켈레톤", self.my_skeleton_panel), 1)
         views.addWidget(self._panel("정상 레퍼런스", self.ref_panel), 1)
         views.addWidget(joint_panel, 0)
 
@@ -551,6 +553,23 @@ class CompareScreen(QWidget):
         )
         self.ref_panel.set_bgr_frame(canvas)
 
+    def _update_my_skeleton_panel(self, status: PipelineStatus) -> None:
+        """웹캠(영상+오버레이) / 정상 레퍼런스 사이에, 내 3D 자세만 크게 스켈레톤으로
+        그려서 보여준다(요청사항). status.aligned_frame은 online_dtw.OnlineSquatSession이
+        DTW에 쓰는 것과 동일한, Hip-center+Scale+Orientation 정규화까지 끝난 좌표라서
+        레퍼런스와 같은 fit_transform(self._ref_tf)을 그대로 재사용해도 스케일이 맞는다
+        — 두 스켈레톤을 나란히 놓고 비교하기도 더 쉬워진다."""
+        if status.aligned_frame is None or self._ref_tf is None:
+            return
+        canvas = np.zeros((REF_PANEL_H, REF_PANEL_W, 3), dtype=np.uint8)
+        points_px = self._ref_tf(status.aligned_frame[:, [0, 1]])
+        draw_skeleton_panel(
+            canvas, (0, 0), REF_PANEL_W, REF_PANEL_H, points_px,
+            f"내 자세 ({PHASE_LABEL_KR.get(status.phase, '-')})", None,
+            COMMON_BONE_INDEX_PAIRS, COMMON_BONE_COLORS_BGR,
+        )
+        self.my_skeleton_panel.set_bgr_frame(canvas)
+
     def _update_countdown(self, status: PipelineStatus) -> None:
         if self.worker is not None and self.worker.session_active:
             return  # 이미 시작됨, 더 이상 카운트다운 로직 필요 없음
@@ -627,6 +646,7 @@ class CompareScreen(QWidget):
 
     def _on_status(self, status: PipelineStatus) -> None:
         self.camera_panel.set_bgr_frame(status.video_bgr)
+        self._update_my_skeleton_panel(status)
         self.fps_label.setText(f"{status.fps:4.1f} FPS")
         self.rep_label.setText(f"REP {status.rep_count}")
 

@@ -56,6 +56,7 @@ class PipelineStatus:
     completed_rep: object | None  # ai_trainer.online_dtw.RepResult
     live_score: float | None  # partial_distance["정상"]을 score_calib으로 환산한 실시간 0~100 유사도(%)
     joint_scores: list[JointScore] | None  # 관절별 위치/각도 오차 (joint_feedback.compute_joint_scores)
+    aligned_frame: np.ndarray | None  # 정규화 완료 (18,3) 3D — 화면 중앙 "내 3D 스켈레톤" 패널용
 
 
 class SquatPipelineWorker(QThread):
@@ -164,6 +165,7 @@ class SquatPipelineWorker(QThread):
                 n_frozen = 0
                 live_score = None
                 joint_scores = None
+                aligned_frame = None
                 pose_found = observation is not None
                 framing_ok = False
                 framing_message = "카메라 앞에 서주세요"
@@ -216,6 +218,7 @@ class SquatPipelineWorker(QThread):
                             phase = status["phase"]
                             partial = status["partial_distance"]
                             pelvis_height = status["pelvis_height"]
+                            aligned_frame = status["aligned_frame"]
                             if status["event"] == "rep_end":
                                 completed = status["completed_rep"]
 
@@ -263,6 +266,7 @@ class SquatPipelineWorker(QThread):
                         completed_rep=completed,
                         live_score=live_score,
                         joint_scores=joint_scores,
+                        aligned_frame=aligned_frame,
                     )
                 )
         except (PoseBackendError, RuntimeError, ValueError, OSError) as error:
