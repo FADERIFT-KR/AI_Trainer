@@ -120,7 +120,19 @@ class CommonSkeleton3DBridge:
         self.min_visibility = min_visibility
         self.last_good = np.zeros((len(COMMON_JOINT_NAMES), 3))
         self.has_good = np.zeros(len(COMMON_JOINT_NAMES), dtype=bool)
-        self._smoother = OneEuroFilter(n_points=len(COMMON_JOINT_NAMES), n_dims=3)
+        # OneEuroFilter의 기본 min_cutoff/beta(0.8/0.02)는 CommonSkeletonBridge(2D 픽셀
+        # 좌표, 프레임간 이동량이 보통 수~수백 px)를 기준으로 잡은 값이다. world_landmarks는
+        # 미터 단위(발목 기준 실측 프레임간 이동량 최대 ~1m/s, 정지 시 ~0.05m/s)라 그대로
+        # 재사용하면 beta*dx 항이 min_cutoff에 비해 거의 0(예: 1.0*0.02=0.02)이 되어 버려
+        # "빠르게 움직일 때 스무딩을 푼다"는 필터의 핵심 동작이 사실상 꺼진 채로 항상 강하게
+        # 스무딩만 걸렸다 — 빠른 하강(0.4m/1초) 시뮬레이션 지연이 beta=0.02일 땐 5.6프레임
+        # (~190ms)이나 됐는데, beta=12.0으로 미터 단위에 맞게 재조정하니 1프레임 이하로
+        # 줄어드는 것으로 확인됨(2026-09-01). 이 지연이 골반 높이/속도 신호를 왜곡시켜
+        # REP 종료 판정이 늦어지거나(최종 프레임에서 상승이 안 끝남) phase 상태기계가
+        # 노이즈성 속도 값에 오작동해 REP가 잘못 세어지고 그 어중간한 프레임이 오류로
+        # 오분류되는 문제(실사용 확인: "카운팅이 이상함", "하방오류가 계속 뜸")의 원인으로
+        # 추정된다.
+        self._smoother = OneEuroFilter(n_points=len(COMMON_JOINT_NAMES), n_dims=3, min_cutoff=0.8, beta=12.0)
 
     def update(self, world_landmarks: np.ndarray) -> tuple[np.ndarray, np.ndarray, float]:
         """world_landmarks: (33,4) [x,y,z,visibility], 미터 단위 실좌표.
