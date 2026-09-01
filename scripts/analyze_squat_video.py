@@ -225,9 +225,13 @@ def main() -> None:
                     if status["event"] == "rep_end":
                         r = status["completed_rep"]
                         score_text = f"{r.score_vs_normal:.0f}%" if r.score_vs_normal is not None else "-"
+                        # screens.py의 판정 보정 로직과 동일하게 맞춘다 — 안 그러면 유사도가
+                        # 높은데도 predicted_class(오류)만 그대로 찍혀서 실제 앱 화면과
+                        # 다른, 오해의 소지가 있는 로그가 된다.
+                        display_class = "정상" if (r.score_vs_normal is not None and r.score_vs_normal >= PASS_SCORE_THRESHOLD) else r.predicted_class
                         print(
                             f"\n=== REP {r.rep_index} 종료 (frame {r.frame_range[0]}~{r.frame_range[1]}) ===\n"
-                            f"  판정: {r.predicted_class}  |  유사도: {score_text}  |  "
+                            f"  판정: {display_class} (nearest={r.predicted_class})  |  유사도: {score_text}  |  "
                             f"거리: { {k: round(v,3) for k,v in r.raw_distance_by_class.items()} }\n"
                             f"  주요 특징: {', '.join(n for n,_ in r.top_contributing_features)}\n"
                         )
@@ -260,7 +264,8 @@ def main() -> None:
         print(f"주석 영상 저장: {out_path}")
     for r in session.completed_reps:
         score_text = f"{r.score_vs_normal:.0f}%" if r.score_vs_normal is not None else "-"
-        print(f"  REP {r.rep_index}: {r.predicted_class}  (유사도 {score_text}, frame {r.frame_range})")
+        display_class = "정상" if (r.score_vs_normal is not None and r.score_vs_normal >= PASS_SCORE_THRESHOLD) else r.predicted_class
+        print(f"  REP {r.rep_index}: {display_class}  (유사도 {score_text}, frame {r.frame_range})")
 
 
 if __name__ == "__main__":
