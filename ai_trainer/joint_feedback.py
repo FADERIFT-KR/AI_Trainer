@@ -17,11 +17,15 @@
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 
 from .common_skeleton import COMMON_JOINT_NAMES
+
+_TOLERANCE_CFG_PATH = Path(__file__).resolve().parent.parent / "configs" / "joint_angle_tolerance.json"
 
 _IDX = {name: i for i, name in enumerate(COMMON_JOINT_NAMES)}
 
@@ -67,12 +71,28 @@ ANGLE_ERROR_SCALE = 45.0
 GREEN_THRESHOLD = 0.08
 YELLOW_THRESHOLD = 0.18
 
-# "합격 범위"로 화면에 보여줄 각도 허용 오차(도). ref_angle(정상 레퍼런스 각도) ±
-# 이 값을 "정상 범위"로 표시한다 — 실측(아이폰 영상)에서 무릎 각도오차 0.5~7도는
-# 명백히 정확한 자세였고, 30도 이상은 명백히 벗어난 자세였던 것을 기준으로 그 사이
-# 값으로 잡은 초기값이다(GREEN/YELLOW_THRESHOLD의 각도 성분과 별개로, "몇 도까지가
-# 합격인지"를 사람이 바로 읽을 수 있는 형태로 노출하기 위한 값 — 실사용 피드백 대응).
-ANGLE_TOLERANCE_DEG = 15.0
+# "합격 범위"로 화면에 보여줄 각도 허용 오차(도), phase/관절별로 다름 —
+# configs/joint_angle_tolerance.json(scripts/compute_joint_angle_tolerance.py로 생성)을
+# 그대로 읽는다. AI Hub "정상" train 시퀀스 129개에서, phase 진행률(0~100%)이 같은
+# 순간끼리 배우들 사이 각도가 실제로 얼마나 벌어지는지(10~90퍼센타일 폭의 절반)를
+# 계산한 값이다 — 그냥 프레임을 다 모아 분산을 재면 사람마다 다른 하강/상승 속도가
+# 자세 차이처럼 부풀어 보여서, "같은 진행률 지점"끼리만 비교했다. 2026-08-28 이전에
+# 쓰던 고정값(모든 phase/관절 공통 15도)은 실측 영상 몇 프레임을 보고 잡은 어림값이었다.
+_ANGLE_TOLERANCE_BY_PHASE_JOINT: dict[str, dict[str, float]] = json.loads(
+    _TOLERANCE_CFG_PATH.read_text(encoding="utf-8")
+)["tolerance_deg"]
+# 알 수 없는 phase가 들어오면(예: "prep"/"bottom" 같은 영문 상태값이 실수로 들어옴)
+# 쓸 기본값 — 전체 phase 평균 근처인 하강/최저점 수준으로 잡는다.
+_DEFAULT_ANGLE_TOLERANCE_DEG = 12.0
+
+
+def _angle_tolerance_deg(phase: str | None, joint_name: str) -> float:
+    by_joint = _ANGLE_TOLERANCE_BY_PHASE_JOINT.get(phase or "")
+    if by_joint is None:
+        return _DEFAULT_ANGLE_TOLERANCE_DEG
+    return by_joint.get(joint_name, _DEFAULT_ANGLE_TOLERANCE_DEG)
+
+
 # ============================================================
 
 STATUS_GOOD, STATUS_WARNING, STATUS_BAD = "good", "warning", "bad"
@@ -86,17 +106,18 @@ class JointScore:
     angle_error_deg: float  # raw, degree
     user_angle_deg: float  # 지금 사용자 각도(도)
     ref_angle_deg: float  # 정렬된 "정상" 레퍼런스 프레임의 각도(도) — 합격 범위의 중심
+    tolerance_deg: float  # 이 phase/관절의 합격 허용오차(도) — AI Hub 실측 기반, phase마다 다름
     score: float  # 0~1 정규화된 최종 오차 (낮을수록 좋음)
     status: str  # STATUS_GOOD | STATUS_WARNING | STATUS_BAD
 
     @property
     def tolerance_range_deg(self) -> tuple[float, float]:
-        """"합격"으로 볼 각도 범위(ref_angle_deg ± ANGLE_TOLERANCE_DEG)."""
-        return self.ref_angle_deg - ANGLE_TOLERANCE_DEG, self.ref_angle_deg + ANGLE_TOLERANCE_DEG
+        """"합격"으로 볼 각도 범위(ref_angle_deg ± tolerance_deg)."""
+        return self.ref_angle_deg - self.tolerance_deg, self.ref_angle_deg + self.tolerance_deg
 
     @property
     def within_angle_tolerance(self) -> bool:
-        return self.angle_error_deg <= ANGLE_TOLERANCE_DEG
+        return self.angle_error_deg <= self.tolerance_deg
 
 
 def _angle_deg(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> float:
@@ -115,9 +136,13 @@ def _status_for(score: float) -> str:
     return STATUS_BAD
 
 
-def compute_joint_scores(user_frame: np.ndarray, ref_frame: np.ndarray) -> list[JointScore]:
+def compute_joint_scores(user_frame: np.ndarray, ref_frame: np.ndarray, phase: str | None = None) -> list[JointScore]:
     """user_frame/ref_frame: (18,3) 정규화 완료 좌표. 두 프레임은 이미 "같은 순간"으로
     정렬되어 있다고 가정한다(정렬 자체는 이 함수의 책임이 아님).
+
+    phase: online_dtw._joint_feedback_frame()이 알려주는 현재 phase("하강"/"최저점"/"상승"
+    등, 한국어 표기). 관절별 합격 허용오차(tolerance_deg)를 phase에 맞게 고르는 데 쓴다 —
+    안 주면(None) 기본값(_DEFAULT_ANGLE_TOLERANCE_DEG)을 쓴다.
 
     joint_error(위치) = ||normalized_user_joint - normalized_reference_joint||
     joint_score = position_error_norm * POSITION_WEIGHT + angle_error_norm * ANGLE_WEIGHT
@@ -140,6 +165,7 @@ def compute_joint_scores(user_frame: np.ndarray, ref_frame: np.ndarray) -> list[
             JointScore(
                 name=name, common_joint=vertex_name, position_error=pos_err,
                 angle_error_deg=angle_err, user_angle_deg=user_angle, ref_angle_deg=ref_angle,
+                tolerance_deg=_angle_tolerance_deg(phase, name),
                 score=score, status=_status_for(score),
             )
         )

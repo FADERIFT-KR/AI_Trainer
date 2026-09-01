@@ -19,7 +19,7 @@ from PyQt5.QtWidgets import (
 )
 
 from ai_trainer.common_skeleton import COMMON_BONE_COLORS_BGR, COMMON_BONE_INDEX_PAIRS
-from ai_trainer.joint_feedback import ANGLE_TOLERANCE_DEG, STATUS_BAD, STATUS_GOOD, STATUS_WARNING, JointScore, TRACKED_JOINTS
+from ai_trainer.joint_feedback import STATUS_BAD, STATUS_GOOD, STATUS_WARNING, JointScore, TRACKED_JOINTS
 from ai_trainer.live_pose.window import ImagePanel
 from ai_trainer.live_pose.worker import CameraConfig
 from ai_trainer.render import draw_skeleton_panel, fit_transform
@@ -66,11 +66,12 @@ def joint_detail_text(js: JointScore) -> str:
     """"몇 도까지가 합격인데 얼마나 벗어났는지"를 그대로 문장으로 만든다.
 
     예: "104° (합격범위 70~100°, 4° 초과)" / "72° (합격범위 60~90°, 합격)".
-    joint_feedback.ANGLE_TOLERANCE_DEG가 합격범위 폭을 결정한다."""
+    합격범위 폭(js.tolerance_deg)은 phase/관절마다 다르다 — AI Hub 실측 기반
+    (configs/joint_angle_tolerance.json, scripts/compute_joint_angle_tolerance.py)."""
     lo, hi = js.tolerance_range_deg
     if js.within_angle_tolerance:
         return f"{js.user_angle_deg:.0f}° (합격범위 {lo:.0f}~{hi:.0f}°, 합격)"
-    over = js.angle_error_deg - ANGLE_TOLERANCE_DEG
+    over = js.angle_error_deg - js.tolerance_deg
     return f"{js.user_angle_deg:.0f}° (합격범위 {lo:.0f}~{hi:.0f}°, {over:.0f}° 초과)"
 
 

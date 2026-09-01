@@ -219,7 +219,7 @@ def main() -> None:
 
                     jf = status["joint_feedback"]
                     if jf is not None:
-                        joint_scores = compute_joint_scores(jf["user_frame"], jf["ref_frame"])
+                        joint_scores = compute_joint_scores(jf["user_frame"], jf["ref_frame"], phase=jf["phase"])
                         draw_joint_feedback(video_bgr, common2d, joint_scores)
 
                     if status["event"] == "rep_end":
