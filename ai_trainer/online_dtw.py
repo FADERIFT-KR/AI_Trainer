@@ -218,6 +218,10 @@ class OnlineSquatSession:
             "partial_distance": partial,
             "joint_feedback": joint_feedback,
             "completed_rep": self.completed_reps[-1] if event == "rep_end" else None,
+            # Hip-center+Scale+Orientation 정규화까지 끝난 (18,3) 3D 좌표. DTW 계산에
+            # 이미 쓰는 것을 그대로 노출 — 화면에 "내 3D 스켈레톤"을 레퍼런스와 같은
+            # 좌표계/스케일로 나란히 그려주기 위함(game_ui.screens 참고).
+            "aligned_frame": aligned,
         }
 
     # ------------------------------------------------------------------
