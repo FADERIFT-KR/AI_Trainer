@@ -381,7 +381,7 @@ class CompareScreen(QWidget):
         self.game_result_body = QLabel("")
         self.game_result_body.setAlignment(Qt.AlignCenter)
         self.game_result_body.setWordWrap(True)
-        self.game_result_body.setStyleSheet("font-size: 14px; color: #cfd6e2;")
+        self.game_result_body.setStyleSheet("font-size: 13px; color: #cfd6e2;")
         gr_layout.addWidget(self.game_result_body, 1)
 
         gr_buttons = QHBoxLayout()
@@ -428,7 +428,7 @@ class CompareScreen(QWidget):
         self.rep_popup_label.setGeometry((self.width() - w) // 2, (self.height() - h) // 2, w, h)
 
     def _position_game_result_panel(self) -> None:
-        w, h = 640, 480
+        w, h = 700, 620
         self.game_result_panel.setGeometry((self.width() - w) // 2, (self.height() - h) // 2, w, h)
 
     @staticmethod
@@ -769,7 +769,25 @@ class CompareScreen(QWidget):
                 f"주요 원인: {', '.join(feature_labels)}\n"
                 f"관절별 근거: {joint_summary}"
             )
-            self._session_reps.append({"index": r.rep_index, "display_class": display_class, "score_text": score_text})
+            # 오류 REP에 대한 구체적인 원인 문구 — 벗어난 관절이 있으면 그 관절의 실측
+            # 각도/합격범위/초과분을 그대로 쓰고(가장 구체적), 없으면 DTW 주요 feature명으로
+            # 대체한다. 팝업뿐 아니라 최종 결과화면(_show_game_result)에도 재사용한다
+            # (요청사항: "엉덩이하방오류가 자세가 정확히 어떻게 문제됐는지 완료화면에 띄워줘").
+            failing_js = [js for js in (self._latest_joint_scores or []) if not js.within_angle_tolerance]
+            if display_class == "정상":
+                fail_reason = ""
+            elif failing_js:
+                # 결과화면에 REP마다 다 나열되면 길어지니 최대 2개 관절만 구체적으로 보여준다.
+                fail_reason = ", ".join(f"{js.name} {joint_detail_text(js)}" for js in failing_js[:2])
+                if len(failing_js) > 2:
+                    fail_reason += f" 외 {len(failing_js) - 2}개"
+            else:
+                fail_reason = feature_labels[0] if feature_labels else ""
+
+            self._session_reps.append({
+                "index": r.rep_index, "display_class": display_class, "score_text": score_text,
+                "fail_reason": fail_reason,
+            })
             self.rep_counter_label.setText(f"{len(self._session_reps)} / {TARGET_REPS}")
 
             if len(self._session_reps) >= TARGET_REPS:
@@ -779,9 +797,8 @@ class CompareScreen(QWidget):
             elif display_class == "정상":
                 self._show_rep_popup(f"성공! 👍\n{score_text}", "good")
             else:
-                failing = [js.name for js in (self._latest_joint_scores or []) if not js.within_angle_tolerance]
-                reason = f"{failing[0]} 등 {len(failing)}개 관절 벗어남" if failing else feature_labels[0] if feature_labels else ""
-                self._show_rep_popup(f"REP {r.rep_index + 1} 완료\n{display_class}\n{reason}", "bad")
+                short_reason = f"{failing_js[0].name} 등 {len(failing_js)}개 관절 벗어남" if failing_js else fail_reason
+                self._show_rep_popup(f"REP {r.rep_index + 1} 완료\n{display_class}\n{short_reason}", "bad")
 
     def _show_game_result(self) -> None:
         """TARGET_REPS(=5)를 채운 뒤 뜨는 결과 화면. 확인 버튼을 누르기 전까지 남아있고
@@ -795,7 +812,13 @@ class CompareScreen(QWidget):
         self.rep_popup_label.hide()
 
         n_pass = sum(1 for rep in self._session_reps if rep["display_class"] == "정상")
-        lines = [f"REP {rep['index'] + 1}: {rep['display_class']} ({rep['score_text']})" for rep in self._session_reps]
+        lines = []
+        for rep in self._session_reps:
+            line = f"REP {rep['index'] + 1}: {rep['display_class']} ({rep['score_text']})"
+            if rep["fail_reason"]:
+                # 오류 REP만 "자세가 정확히 어떻게 문제됐는지" 근거를 같이 보여준다(요청사항).
+                line += f"\n     ↳ {rep['fail_reason']}"
+            lines.append(line)
         self.game_result_body.setText(f"정상 {n_pass} / {TARGET_REPS}\n\n" + "\n".join(lines))
         self._position_game_result_panel()
         self.game_result_panel.show()
