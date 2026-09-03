@@ -1,9 +1,9 @@
 """오류유형별 말풍선 설명: 해당 오류와 관련된 관절 옆에 짧은 문구를 표시한다.
 
 관절/설명 매핑은 claude.md 9장(오류유형별 주요 feature)과 dtw_feature_weights.json의
-class_overrides/feedback_focus_features를 따른다:
-  - 발뒤꿈치오류 -> heel_height, ankle_angle
-  - 엉덩이하방오류 -> pelvis_trajectory(최저점 깊이)
+class_overrides/feedback_focus_features를 따른다(2026-09-02 각도 위주로 재설계):
+  - 발뒤꿈치오류 -> ankle_angle(발목 각도로 뒤꿈치 들림을 우회 판별)
+  - 엉덩이하방오류 -> knee_flexion_angle, hip_flexion_angle(무릎/고관절 각도로 깊이를 우회 판별)
   - 고관절오류 -> torso_inclination, hip_flexion_angle
 """
 from __future__ import annotations
