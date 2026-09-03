@@ -84,6 +84,7 @@ class OnlineSquatSession:
 
     state: str = "prep"  # prep/descend/bottom/ascend
     debounce_ctr: int = 0
+    reversal_ctr: int = 0  # "하강" 중 "멈추지 않고 바로 뒤집힘"(찍고 바로 올라옴) 감지용, debounce_ctr과 별개
     rep_start_idx: int | None = None
     phase_boundaries_running: dict = field(default_factory=dict)  # 현재 rep의 phase별 [start, end)
     current_phase_start: int = 0
@@ -247,15 +248,35 @@ class OnlineSquatSession:
                 self.debounce_ctr = 0
                 event = "rep_start"
         elif self.state == "descend":
+            # 속도가 0 근처에 "멈춰서는" 경우(debounce_ctr)와, 멈추지 않고 곧바로
+            # 플러스로 뒤집히는 경우(reversal_ctr, "찍고 바로 올라옴") 둘 다 감지한다.
+            # _causal_velocity는 과거 5프레임 평균 기울기라 방향이 급하게 뒤집히면
+            # "거의 0"인 구간이 1프레임도 안 나올 수 있어서(실사용 확인: "최저점에서
+            # 멈추는 구간이 있긴 한데 사람은 찍고 바로 올라오는 스타일이라 저렇게
+            # 판단하면 안 됨") debounce_ctr 조건만으로는 하강 상태에 영원히 갇힐 수
+            # 있었다 — 상승 전환 조건(velocity>vel_eps)은 그대로 재사용하되, "최저점"을
+            # 시작=끝이 같은(0프레임) 구간으로 기록하고 바로 "상승"으로 넘어간다.
             if abs(velocity) <= self.vel_eps:
                 self.debounce_ctr += 1
+                self.reversal_ctr = 0
+            elif velocity > self.vel_eps:
+                self.debounce_ctr = 0
+                self.reversal_ctr += 1
             else:
                 self.debounce_ctr = 0
+                self.reversal_ctr = 0
             if self.debounce_ctr >= self.debounce_n:
                 self.phase_boundaries_running["하강"] = [self.current_phase_start, t - self.debounce_n]
                 self.current_phase_start = t - self.debounce_n
                 self.state = "bottom"
                 self.debounce_ctr = 0
+            elif self.reversal_ctr >= self.debounce_n:
+                end_t = t - self.debounce_n
+                self.phase_boundaries_running["하강"] = [self.current_phase_start, end_t]
+                self.phase_boundaries_running["최저점"] = [end_t, end_t]
+                self.current_phase_start = end_t
+                self.state = "ascend"
+                self.reversal_ctr = 0
         elif self.state == "bottom":
             if velocity > self.vel_eps:
                 self.debounce_ctr += 1
