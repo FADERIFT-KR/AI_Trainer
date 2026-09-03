@@ -7,31 +7,41 @@
       "Left Knee": 3.2,
       "Right Knee": 5.6,
       "Left Hip": 5.7,
-      "Right Hip": 4.3
+      "Right Hip": 4.3,
+      "Left Ankle": 4.3,
+      "Right Ankle": 4.8
     },
     "하강": {
       "Left Knee": 13.0,
       "Right Knee": 14.2,
       "Left Hip": 10.5,
-      "Right Hip": 12.0
+      "Right Hip": 12.0,
+      "Left Ankle": 7.6,
+      "Right Ankle": 6.6
     },
     "최저점": {
       "Left Knee": 15.4,
       "Right Knee": 14.8,
       "Left Hip": 10.1,
-      "Right Hip": 9.8
+      "Right Hip": 9.8,
+      "Left Ankle": 8.9,
+      "Right Ankle": 6.6
     },
     "상승": {
       "Left Knee": 20.1,
       "Right Knee": 21.4,
       "Left Hip": 19.1,
-      "Right Hip": 18.1
+      "Right Hip": 18.1,
+      "Left Ankle": 8.8,
+      "Right Ankle": 7.5
     },
     "종료": {
       "Left Knee": 3.6,
       "Right Knee": 4.9,
       "Left Hip": 6.2,
-      "Right Hip": 5.5
+      "Right Hip": 5.5,
+      "Left Ankle": 4.5,
+      "Right Ankle": 4.6
     }
   },
   "detail": {
@@ -51,6 +61,14 @@
       "Right Hip": {
         "n_seq": 104,
         "median_p10_p90_range_deg": 8.6
+      },
+      "Left Ankle": {
+        "n_seq": 104,
+        "median_p10_p90_range_deg": 8.7
+      },
+      "Right Ankle": {
+        "n_seq": 104,
+        "median_p10_p90_range_deg": 9.6
       }
     },
     "하강": {
@@ -69,6 +87,14 @@
       "Right Hip": {
         "n_seq": 129,
         "median_p10_p90_range_deg": 23.9
+      },
+      "Left Ankle": {
+        "n_seq": 129,
+        "median_p10_p90_range_deg": 15.3
+      },
+      "Right Ankle": {
+        "n_seq": 129,
+        "median_p10_p90_range_deg": 13.1
       }
     },
     "최저점": {
@@ -87,6 +113,14 @@
       "Right Hip": {
         "n_seq": 129,
         "median_p10_p90_range_deg": 19.7
+      },
+      "Left Ankle": {
+        "n_seq": 129,
+        "median_p10_p90_range_deg": 17.8
+      },
+      "Right Ankle": {
+        "n_seq": 129,
+        "median_p10_p90_range_deg": 13.3
       }
     },
     "상승": {
@@ -105,6 +139,14 @@
       "Right Hip": {
         "n_seq": 129,
         "median_p10_p90_range_deg": 36.3
+      },
+      "Left Ankle": {
+        "n_seq": 129,
+        "median_p10_p90_range_deg": 17.6
+      },
+      "Right Ankle": {
+        "n_seq": 129,
+        "median_p10_p90_range_deg": 14.9
       }
     },
     "종료": {
@@ -123,6 +165,14 @@
       "Right Hip": {
         "n_seq": 117,
         "median_p10_p90_range_deg": 11.1
+      },
+      "Left Ankle": {
+        "n_seq": 117,
+        "median_p10_p90_range_deg": 9.0
+      },
+      "Right Ankle": {
+        "n_seq": 117,
+        "median_p10_p90_range_deg": 9.3
       }
     }
   }

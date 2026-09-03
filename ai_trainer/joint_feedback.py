@@ -33,6 +33,10 @@ _IDX = {name: i for i, name in enumerate(COMMON_JOINT_NAMES)}
 #   무릎 = Hip-Knee-Ankle (요청사항)
 #   고관절 = Shoulder-Hip-Knee (요청사항 — DTW의 hip_flexion_angle(Neck 기준)과는 다름,
 #            여기서는 좌우 각각 어깨를 기준으로 써서 좌우 비대칭도 잡아낼 수 있게 함)
+#   발목 = Knee-Ankle-BigToe (DTW의 ankle_angle과 동일 정의, features.py 참고) — 2026-09-03
+#         추가. DTW가 "발뒤꿈치오류"를 이 각도로 판별하도록 바뀐 뒤(위치기반 heel_height
+#         제거), 관절 패널에 발목이 없어서 "발뒤꿈치오류"인데 근거로는 무관한 무릎/고관절
+#         각도만 보여주는 불일치가 생겼다 — DTW 판정 근거와 화면 설명을 일치시키기 위해 추가.
 #
 # 어깨(Hip-Shoulder-Elbow)는 의도적으로 제외했다(2026-08-28, 실사용 확인) — 이 각도는
 # 상완을 얼마나 앞으로 뻗었는지를 재는데, "정상" 레퍼런스 프레임을 고르는 정렬 자체가
@@ -45,6 +49,8 @@ TRACKED_JOINTS: dict[str, tuple[str, str, str]] = {
     "Right Knee": ("RHip", "RKnee", "RAnkle"),
     "Left Hip": ("LShoulder", "LHip", "LKnee"),
     "Right Hip": ("RShoulder", "RHip", "RKnee"),
+    "Left Ankle": ("LKnee", "LAnkle", "LBigToe"),
+    "Right Ankle": ("RKnee", "RAnkle", "RBigToe"),
 }
 
 # ============================================================
