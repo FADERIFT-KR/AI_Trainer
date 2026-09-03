@@ -56,8 +56,9 @@ FEATURE_LABEL_KR = {
     "left_right_asymmetry": "좌우 비대칭",
 }
 
-# 관절별 오차 막대(JointBarRow) 색상/라벨 — joint_feedback.py의 GREEN/YELLOW_THRESHOLD로
-# 판정된 status 문자열("good"/"warning"/"bad")을 화면에 표시할 때 쓴다.
+# 관절별 오차 막대(JointBarRow) 색상/라벨 — joint_feedback.py가 phase별 CSV 실측
+# 허용오차(tolerance_deg) 대비 각도오차 비율로 판정한 status 문자열
+# ("good"/"warning"/"bad")을 화면에 표시할 때 쓴다.
 _JOINT_STATUS_COLOR = {STATUS_GOOD: "#72df8d", STATUS_WARNING: "#f2bd61", STATUS_BAD: "#ff7b7b"}
 _JOINT_STATUS_LABEL = {STATUS_GOOD: "GOOD", STATUS_WARNING: "WARNING", STATUS_BAD: "BAD"}
 

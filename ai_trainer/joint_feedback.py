@@ -48,28 +48,18 @@ TRACKED_JOINTS: dict[str, tuple[str, str, str]] = {
 }
 
 # ============================================================
-# 튜닝 파라미터 — 색상 기준/가중치를 바꾸고 싶으면 이 블록만 수정하면 된다.
+# 튜닝 파라미터 — 판정 기준을 바꾸고 싶으면 이 블록만 수정하면 된다.
 #
-# 2026-08-28 실측(아이폰 촬영 영상) 재보정: 위치오차(position_error)는 "정렬된 서로
-# 다른 두 사람"의 절대 관절 위치를 비교하는 값이라, leg_length로 정규화해도 개인마다
-# 팔/몸통 비율이 달라 자세가 맞아도 0.1~0.3 정도의 오차가 항상 발생한다는 게 확인됨
-# (예: 무릎 각도오차가 1~7도로 사실상 정확한 프레임에서도 position_error=0.10~0.29).
-# 그래서 position 비중은 낮추고(0.4->0.2) 개인차에 덜 민감한 각도(angle) 비중을
-# 높였다(0.6->0.8), POSITION_ERROR_SCALE도 완화(0.25->0.5). GREEN/YELLOW 임계값도
-# 이 재보정된 점수 분포에 맞춰 같이 올렸다(실측 예시로 검증: 무릎 각도오차 0.5~7도인
-# 프레임이 good/warning으로, 각도오차 30도 안팎인 프레임은 여전히 bad로 나옴).
+# 2026-09-02: 위치오차(position_error)를 판정에서 완전히 뺐다 — "정렬된 서로 다른
+# 두 사람"의 절대 관절 위치를 비교하는 값이라, leg_length로 정규화해도 개인마다
+# 팔/몸통 비율이 달라 자세가 맞아도 항상 오차가 낀다는 게 실측으로 확인됐고
+# (2026-08-28), 사용자도 "위치오차는 빼고 각도만 보수적으로 보는 게 맞다"고
+# 확인함. position_error 필드 자체는 진단용으로 계속 계산은 하지만 score/status에는
+# 전혀 관여하지 않는다. score/status는 이제 configs/joint_angle_tolerance.json의
+# phase별 CSV 실측 허용오차(tolerance_deg) 하나만 기준으로 정해진다 — 각도오차가
+# 허용오차의 절반 이내면 good, 허용오차 이내면 warning, 넘으면 bad.
 # ============================================================
-POSITION_WEIGHT = 0.2  # joint_score에서 위치 오차가 차지하는 비중
-ANGLE_WEIGHT = 0.8  # joint_score에서 각도 오차가 차지하는 비중 (POSITION_WEIGHT와 합이 1이 되도록 유지 권장)
-
-# 위치오차(leg_length 단위)가 이 값 이상이면 정규화 오차 1.0(최댓값)으로 클램프.
-POSITION_ERROR_SCALE = 0.5
-# 각도오차(도, degree)가 이 값 이상이면 정규화 오차 1.0으로 클램프.
-ANGLE_ERROR_SCALE = 45.0
-
-# 최종 0~1 joint_score 판정 기준.
-GREEN_THRESHOLD = 0.08
-YELLOW_THRESHOLD = 0.18
+SCORE_RATIO_CAP = 2.0  # 진행바 0~100% 표시용: angle_err가 tolerance_deg의 이 배수면 100%로 클램프
 
 # "합격 범위"로 화면에 보여줄 각도 허용 오차(도), phase/관절별로 다름 —
 # configs/joint_angle_tolerance.json(scripts/compute_joint_angle_tolerance.py로 생성)을
@@ -128,10 +118,11 @@ def _angle_deg(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> float:
     return float(np.degrees(np.arccos(np.clip(cos, -1.0, 1.0))))
 
 
-def _status_for(score: float) -> str:
-    if score <= GREEN_THRESHOLD:
+def _status_for(angle_err: float, tolerance_deg: float) -> str:
+    ratio = angle_err / tolerance_deg if tolerance_deg > 1e-6 else float("inf")
+    if ratio <= 0.5:
         return STATUS_GOOD
-    if score <= YELLOW_THRESHOLD:
+    if ratio <= 1.0:
         return STATUS_WARNING
     return STATUS_BAD
 
@@ -144,8 +135,8 @@ def compute_joint_scores(user_frame: np.ndarray, ref_frame: np.ndarray, phase: s
     등, 한국어 표기). 관절별 합격 허용오차(tolerance_deg)를 phase에 맞게 고르는 데 쓴다 —
     안 주면(None) 기본값(_DEFAULT_ANGLE_TOLERANCE_DEG)을 쓴다.
 
-    joint_error(위치) = ||normalized_user_joint - normalized_reference_joint||
-    joint_score = position_error_norm * POSITION_WEIGHT + angle_error_norm * ANGLE_WEIGHT
+    position_error(위치오차)는 진단용으로 계산만 하고 score/status에는 안 쓴다(위 설명 참고).
+    joint_score(진행바용, 0~1) = min(1, angle_err / (tolerance_deg * SCORE_RATIO_CAP))
     """
     scores: list[JointScore] = []
     for name, (a_name, vertex_name, b_name) in TRACKED_JOINTS.items():
@@ -156,17 +147,16 @@ def compute_joint_scores(user_frame: np.ndarray, ref_frame: np.ndarray, phase: s
         user_angle = _angle_deg(user_frame[ai], user_frame[vi], user_frame[bi])
         ref_angle = _angle_deg(ref_frame[ai], ref_frame[vi], ref_frame[bi])
         angle_err = abs(user_angle - ref_angle)
+        tolerance = _angle_tolerance_deg(phase, name)
 
-        pos_norm = min(1.0, pos_err / POSITION_ERROR_SCALE)
-        angle_norm = min(1.0, angle_err / ANGLE_ERROR_SCALE)
-        score = float(np.clip(POSITION_WEIGHT * pos_norm + ANGLE_WEIGHT * angle_norm, 0.0, 1.0))
+        score = float(np.clip(angle_err / (tolerance * SCORE_RATIO_CAP), 0.0, 1.0)) if tolerance > 1e-6 else 1.0
 
         scores.append(
             JointScore(
                 name=name, common_joint=vertex_name, position_error=pos_err,
                 angle_error_deg=angle_err, user_angle_deg=user_angle, ref_angle_deg=ref_angle,
-                tolerance_deg=_angle_tolerance_deg(phase, name),
-                score=score, status=_status_for(score),
+                tolerance_deg=tolerance,
+                score=score, status=_status_for(angle_err, tolerance),
             )
         )
     return scores
