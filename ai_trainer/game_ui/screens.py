@@ -506,7 +506,12 @@ class CompareScreen(QWidget):
             return
         if self._phase_complete_hold_timer.isActive():
             return  # "완료" 표시가 아직 안 끝났으면 phase가 바뀌어도 유지
-        self._set_phase_stage(_PHASE_STAGE_INDEX.get(status.phase))
+        idx = _PHASE_STAGE_INDEX.get(status.phase)
+        if idx is None:
+            return  # 프레이밍/인식이 한두 프레임 흔들려 phase가 잠깐 None이 돼도(실사용
+            # 확인: "최저점에서 불이 꺼짐") 스테퍼를 끄지 않고 마지막 단계를 그대로 유지 —
+            # CommonSkeletonBridge가 저신뢰 관절을 freeze하는 것과 같은 패턴.
+        self._set_phase_stage(idx)
 
     def _build_joint_panel(self) -> QGroupBox:
         """관절별 오차 막대 패널. DTW 결과(judge_label/result_label)와는 별개로,
