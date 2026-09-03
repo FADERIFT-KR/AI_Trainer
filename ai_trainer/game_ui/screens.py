@@ -307,6 +307,17 @@ class CompareScreen(QWidget):
             "QPushButton { padding: 6px 12px; }"
         )
 
+        # "N / TARGET_REPS" 큰 카운터 — 세션 내내 화면 상단에 떠 있는다(요청사항: "카운트를
+        # 1/5 이렇게 크게 띄워줘"). 몇 REP까지 실제로 세어졌는지 한눈에 보여서, "5번 했는데
+        # 완료화면이 안 뜬다" 같은 문제가 다시 생겨도 어디서 멈췄는지 바로 보이게 한다.
+        self.rep_counter_label = QLabel("0 / 5", self)
+        self.rep_counter_label.setAlignment(Qt.AlignCenter)
+        self.rep_counter_label.setStyleSheet(
+            "background: rgba(10,14,20,190); color: #72df8d; font-size: 42px; "
+            "font-weight: 800; border-radius: 14px; border: 2px solid #343c4b;"
+        )
+        self.rep_counter_label.hide()
+
         # 화면 중앙에 뜨는 3-2-1 카운트다운 (일반 레이아웃에 안 넣고 위에 겹쳐 그림)
         self.countdown_label = QLabel("", self)
         self.countdown_label.setAlignment(Qt.AlignCenter)
@@ -399,9 +410,14 @@ class CompareScreen(QWidget):
 
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 (Qt override)
         super().resizeEvent(event)
+        self._position_rep_counter_label()
         self._position_countdown_label()
         self._position_rep_popup_label()
         self._position_game_result_panel()
+
+    def _position_rep_counter_label(self) -> None:
+        w, h = 160, 70
+        self.rep_counter_label.setGeometry((self.width() - w) // 2, 12, w, h)
 
     def _position_countdown_label(self) -> None:
         w, h = 340, 240
@@ -484,6 +500,10 @@ class CompareScreen(QWidget):
         for row in self._joint_rows.values():
             row.clear()
         self._latest_joint_scores = None
+        self.rep_counter_label.setText(f"0 / {TARGET_REPS}")
+        self._position_rep_counter_label()
+        self.rep_counter_label.show()
+        self.rep_counter_label.raise_()
 
         self.worker = SquatPipelineWorker(config=CameraConfig())
         self.worker.status_ready.connect(self._on_status)
@@ -500,6 +520,7 @@ class CompareScreen(QWidget):
         self._rep_popup_timer.stop()
         self.countdown_label.hide()
         self.rep_popup_label.hide()
+        self.rep_counter_label.hide()
         self.game_result_panel.hide()
         if self.worker is not None and self.worker.isRunning():
             self.worker.requestInterruption()
@@ -749,6 +770,7 @@ class CompareScreen(QWidget):
                 f"관절별 근거: {joint_summary}"
             )
             self._session_reps.append({"index": r.rep_index, "display_class": display_class, "score_text": score_text})
+            self.rep_counter_label.setText(f"{len(self._session_reps)} / {TARGET_REPS}")
 
             if len(self._session_reps) >= TARGET_REPS:
                 # TARGET_REPS(=5)를 채웠다 — 매 REP마다 뜨던 작은 팝업 대신, 확인을 누를
