@@ -32,6 +32,15 @@ REF_PANEL_W, REF_PANEL_H = 480, 480
 
 PHASE_LABEL_KR = {"prep": "준비", "descend": "하강", "bottom": "최저점", "ascend": "상승", None: "-"}
 
+# 실시간 5단계 스테퍼(요청사항: "준비자세/하강중/최저/상승/완료 5단계로 세분화해서
+# 화면에 현재 상황 띄워달라") — online_dtw.OnlineSquatSession.state는 "완료"라는
+# 별도 상태가 없이 REP이 끝나자마자 바로 "prep"으로 돌아가므로, "완료"는 상태가
+# 아니라 status.completed_rep이 막 도착한 순간을 붙잡아 잠깐(PHASE_COMPLETE_HOLD_MS)
+# 보여주는 식으로 흉내낸다.
+PHASE_STAGES = ["준비자세", "하강중", "최저", "상승", "완료"]
+_PHASE_STAGE_INDEX = {"prep": 0, "descend": 1, "bottom": 2, "ascend": 3}
+PHASE_COMPLETE_HOLD_MS = 900
+
 # REP 완료 알림이 화면 중앙에 떠 있는 시간(ms). 근거 문구까지 읽을 시간을 주기 위해
 # 판정 클래스만 보여주던 때(1200ms)보다 늘림.
 REP_POPUP_DURATION_MS = 2000
@@ -272,6 +281,8 @@ class CompareScreen(QWidget):
         header.addWidget(self.rep_label)
         header.addWidget(self.fps_label)
 
+        phase_stepper = self._build_phase_stepper()
+
         joint_panel = self._build_joint_panel()
 
         views = QHBoxLayout()
@@ -296,6 +307,7 @@ class CompareScreen(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 12, 14, 12)
         layout.addLayout(header)
+        layout.addLayout(phase_stepper)
         layout.addLayout(views, 1)
         layout.addWidget(self.judge_label)
         layout.addWidget(self.result_label)
@@ -439,6 +451,63 @@ class CompareScreen(QWidget):
         v.addWidget(image)
         return group
 
+    _STAGE_STYLE_INACTIVE = (
+        "font-size: 14px; font-weight: 600; color: #6b7484; background: #1a1f29; "
+        "border: 1px solid #343c4b; border-radius: 8px; padding: 8px 4px;"
+    )
+    _STAGE_STYLE_ACTIVE = (
+        "font-size: 14px; font-weight: 800; color: #ffffff; background: #2f6feb; "
+        "border: 1px solid #4c8bff; border-radius: 8px; padding: 8px 4px;"
+    )
+    _STAGE_STYLE_COMPLETE = (
+        "font-size: 14px; font-weight: 800; color: #0d1a10; background: #72df8d; "
+        "border: 1px solid #4ade80; border-radius: 8px; padding: 8px 4px;"
+    )
+
+    def _build_phase_stepper(self) -> QHBoxLayout:
+        """준비자세->하강중->최저->상승->완료 5단계를 화면 상단에 항상 띄워, 지금 어느
+        단계인지 실시간으로 강조 표시한다(요청사항)."""
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        self._phase_stage_labels: list[QLabel] = []
+        for stage_name in PHASE_STAGES:
+            lbl = QLabel(stage_name)
+            lbl.setAlignment(Qt.AlignCenter)
+            lbl.setStyleSheet(self._STAGE_STYLE_INACTIVE)
+            self._phase_stage_labels.append(lbl)
+            row.addWidget(lbl, 1)
+
+        self._phase_complete_hold_timer = QTimer(self)
+        self._phase_complete_hold_timer.setSingleShot(True)
+        self._phase_complete_hold_timer.setInterval(PHASE_COMPLETE_HOLD_MS)
+        self._phase_complete_hold_timer.timeout.connect(lambda: self._set_phase_stage(None))
+        self._phase_stage_active: int | None = None
+        return row
+
+    def _set_phase_stage(self, active_idx: int | None) -> None:
+        if active_idx == self._phase_stage_active:
+            return
+        self._phase_stage_active = active_idx
+        for i, lbl in enumerate(self._phase_stage_labels):
+            if i != active_idx:
+                lbl.setStyleSheet(self._STAGE_STYLE_INACTIVE)
+            elif active_idx == 4:  # "완료"만 성공 느낌의 초록으로 구분
+                lbl.setStyleSheet(self._STAGE_STYLE_COMPLETE)
+            else:
+                lbl.setStyleSheet(self._STAGE_STYLE_ACTIVE)
+
+    def _update_phase_stepper(self, status: PipelineStatus) -> None:
+        if status.completed_rep is not None:
+            # REP이 막 끝난 순간 — online_dtw 상태는 이미 "prep"으로 돌아가 있지만,
+            # 그대로 두면 "완료"를 사람이 볼 새도 없이 바로 "준비자세"로 넘어가 버리므로
+            # 잠깐(PHASE_COMPLETE_HOLD_MS) "완료"를 붙잡아 보여준다.
+            self._set_phase_stage(4)
+            self._phase_complete_hold_timer.start()
+            return
+        if self._phase_complete_hold_timer.isActive():
+            return  # "완료" 표시가 아직 안 끝났으면 phase가 바뀌어도 유지
+        self._set_phase_stage(_PHASE_STAGE_INDEX.get(status.phase))
+
     def _build_joint_panel(self) -> QGroupBox:
         """관절별 오차 막대 패널. DTW 결과(judge_label/result_label)와는 별개로,
         "지금 이 순간" 프레임 레벨 관절 오차(joint_feedback.py)만 보여준다."""
@@ -504,6 +573,8 @@ class CompareScreen(QWidget):
         self._position_rep_counter_label()
         self.rep_counter_label.show()
         self.rep_counter_label.raise_()
+        self._phase_complete_hold_timer.stop()
+        self._set_phase_stage(None)
 
         self.worker = SquatPipelineWorker(config=CameraConfig())
         self.worker.status_ready.connect(self._on_status)
@@ -521,6 +592,8 @@ class CompareScreen(QWidget):
         self.countdown_label.hide()
         self.rep_popup_label.hide()
         self.rep_counter_label.hide()
+        self._phase_complete_hold_timer.stop()
+        self._set_phase_stage(None)
         self.game_result_panel.hide()
         if self.worker is not None and self.worker.isRunning():
             self.worker.requestInterruption()
@@ -670,6 +743,7 @@ class CompareScreen(QWidget):
     def _on_status(self, status: PipelineStatus) -> None:
         self.camera_panel.set_bgr_frame(status.video_bgr)
         self._update_my_skeleton_panel(status)
+        self._update_phase_stepper(status)
         self.fps_label.setText(f"{status.fps:4.1f} FPS")
         self.rep_label.setText(f"REP {status.rep_count}")
 
