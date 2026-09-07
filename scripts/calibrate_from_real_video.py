@@ -116,6 +116,9 @@ def main() -> None:
     hi = float(arr.max()) + PAD_HI
     print(f"\n전체 REP {len(all_normal_d)}개(영상 {len(args.videos)}개) 기준: lo={lo:.3f} hi={hi:.3f}")
 
+    # "score_calibration_ground_truth"는 라이브 앱(pipeline_worker.py)이 실제로 읽는 키다
+    # (run_offline_dtw_eval.py의 CSV 전용 계산은 별도 키 "score_calibration_ground_truth_csv_only"에
+    # 저장하도록 분리해뒀다 — 2026-09-04, 예전엔 같은 키를 같이 써서 서로 덮어쓰던 버그가 있었음).
     report = json.loads(OFFLINE_REPORT_PATH.read_text(encoding="utf-8"))
     old = report.get("score_calibration_ground_truth")
     report["score_calibration_ground_truth"] = {
