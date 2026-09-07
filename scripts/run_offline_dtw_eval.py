@@ -292,10 +292,20 @@ def main() -> None:
         r = multi_reference_distance(q["feat"], q["bounds"], db["ground_truth"]["정상"], w, weights_cfg, top_k=2)
         (normal_d_gt if q["meta"]["true_class"] == "정상" else error_d_gt).append(r["min_distance"])
     calib_gt = fit_score_calibration(np.array(normal_d_gt), np.array(error_d_gt))
-    report["score_calibration_ground_truth"] = {
+    # 주의: 키 이름이 "score_calibration_ground_truth_csv_only"인 이유 — 예전엔 이 값을
+    # scripts/calibrate_from_real_video.py가 실촬영 영상으로 계산해 쓰는 것과 같은 키
+    # ("score_calibration_ground_truth")에 저장했었다. CSV끼리만 비교한 이 값(순수하고
+    # 노이즈가 없어 거리 스케일이 훨씬 작음)과 실제 MediaPipe 쿼리용 값(노이즈 있는 실측
+    # 거리 기준)은 도메인이 완전히 달라 서로 안 맞는데, 같은 키를 쓰다 보니 둘 중 아무
+    # 스크립트나 나중에 다시 돌리면 다른 하나가 계산해둔 값을 조용히 덮어써버렸다
+    # (2026-09-04 실사용 확인 — CSV 데이터에 실촬영 기준 calibration을 잘못 적용해보니
+    # 오류 라벨 대부분이 "정상"으로 잘못 보정되는 것을 발견). 라이브 앱(pipeline_worker.py)이
+    # 실제로 쓰는 건 calibrate_from_real_video.py가 쓰는 "score_calibration_ground_truth"
+    # 쪽이므로 그 키 이름은 그대로 두고, 여기(CSV 전용) 값만 별도 키로 분리했다.
+    report["score_calibration_ground_truth_csv_only"] = {
         **calib_gt, "n_normal": len(normal_d_gt), "n_error": len(error_d_gt), "weight_profile": calib_profile,
     }
-    print(f"calibration(GT) 완료 ({time.time()-t0:.1f}초): lo={calib_gt['lo']:.3f} hi={calib_gt['hi']:.3f}  (n_normal={len(normal_d_gt)}, n_error={len(error_d_gt)})")
+    print(f"calibration(GT, CSV-only) 완료 ({time.time()-t0:.1f}초): lo={calib_gt['lo']:.3f} hi={calib_gt['hi']:.3f}  (n_normal={len(normal_d_gt)}, n_error={len(error_d_gt)})")
 
     # ---- 6) 예시 몇 개 (predicted class / raw distance / 주요 error feature) ----
     print("\n예시 Validation 쿼리:")
