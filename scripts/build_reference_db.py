@@ -24,7 +24,7 @@ import torch  # noqa: E402
 
 from ai_trainer.actor_split import load_all_air_squat_sequences  # noqa: E402
 from ai_trainer.aihub_zip import AiHubZip  # noqa: E402
-from ai_trainer.clustering import kmedoids, pairwise_dtw_distance_matrix, sequence_feature_matrix  # noqa: E402
+from ai_trainer.clustering import best_kmedoids, pairwise_dtw_distance_matrix, sequence_feature_matrix  # noqa: E402
 from ai_trainer.lifting_dataset import load_actor_split  # noqa: E402
 from ai_trainer.lifting_model import TemporalLiftingNet  # noqa: E402
 from ai_trainer.phase_features import extract_phase_features  # noqa: E402
@@ -47,7 +47,8 @@ CLASSES = ["정상", "발뒤꿈치오류", "엉덩이하방오류", "고관절�
 N_CANDIDATES_PER_CLASS = 40  # DTW 계산량을 위해 클래스당 후보 상한
 K_MEDOIDS = 4
 DTW_RADIUS = 5
-SEED = 17
+SEED = 17  # 후보 sample_candidates 전용 — 어떤 시퀀스들이 후보 pool에 들어가는지는 고정
+CLUSTER_SEEDS = range(20)  # k-medoids 초기화 시드 후보 — best_kmedoids가 이 중 응집도 최고를 고름
 
 
 def sample_candidates(all_seqs, cls: str, n: int, seed: int):
@@ -107,8 +108,14 @@ def main() -> None:
         print(f"DTW 완료 ({time.time()-t0:.1f}초)")
 
         k = min(K_MEDOIDS, len(built))
-        medoid_idx, assignment = kmedoids(dist, k=k, seed=SEED)
-        print(f"medoid {k}개 선정: " + ", ".join(f"{built[i][0].seq.actor}/rep{built[i][0].seq.rep}" for i in medoid_idx))
+        # k-medoids는 초기화(farthest-point 시작점)에 따라 local optimum이 크게 흔들린다
+        # (실측: 같은 후보 pool에서 seed만 바꿔도 val AP가 70%~85% 사이로 요동침, 2026-09-08
+        # 확인). validation 성능으로 seed를 고르면 val에 대한 모델 선택 누수가 되므로, 대신
+        # train 후보들 안에서만 계산되는 클러스터링 내부 목적함수(총 distortion = 각 점과
+        # 배정된 medoid 사이 거리의 합)가 가장 낮은(=가장 응집력 있는) 결과를 고른다
+        # (best_kmedoids, clustering.py) — val 라벨/거리를 전혀 안 보므로 누수가 아니다.
+        medoid_idx, assignment, cluster_seed = best_kmedoids(dist, k=k, seeds=CLUSTER_SEEDS)
+        print(f"medoid {k}개 선정(cluster_seed={cluster_seed}): " + ", ".join(f"{built[i][0].seq.actor}/rep{built[i][0].seq.rep}" for i in medoid_idx))
 
         for rank, i in enumerate(medoid_idx):
             os_, gt_ref, feats, bounds, _ = built[i]

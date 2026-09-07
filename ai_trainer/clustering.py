@@ -61,3 +61,32 @@ def kmedoids(dist: np.ndarray, k: int, seed: int = 0, max_iter: int = 100) -> tu
         medoids, assignment = new_medoids, new_assignment
 
     return medoids, assignment
+
+
+def total_distortion(dist: np.ndarray, medoids: np.ndarray, assignment: np.ndarray) -> float:
+    """클러스터링 품질의 내부 기준(= k-medoids가 최소화하려는 목적함수 그 자체):
+    각 점과 그 점이 속한 medoid 사이 거리의 총합. 낮을수록 응집도가 높다.
+    Validation label/거리는 전혀 안 쓰므로 이 기준으로 seed를 고르는 건 val에 대한
+    과적합(모델 선택 누수)이 아니다 — train 후보들끼리만 보고 판단한다.
+    """
+    return float(dist[np.arange(dist.shape[0]), medoids[assignment]].sum())
+
+
+def best_kmedoids(
+    dist: np.ndarray, k: int, seeds: range | list[int] = range(20), max_iter: int = 100
+) -> tuple[np.ndarray, np.ndarray, int]:
+    """farthest-point 초기화가 매번 다른 지점에서 시작해 local optimum이 흔들리는 문제를
+    완화하기 위해, 여러 시드로 kmedoids를 돌려 total_distortion이 가장 낮은(=가장
+    응집력 있는) 결과를 고른다. validation 성능이 아니라 클러스터링 자체의 내부 목적함수로
+    고르므로 val 누수가 없다.
+
+    반환: (medoid_indices, assignment, best_seed)
+    """
+    best = None
+    for seed in seeds:
+        medoids, assignment = kmedoids(dist, k=k, seed=seed, max_iter=max_iter)
+        score = total_distortion(dist, medoids, assignment)
+        if best is None or score < best[0]:
+            best = (score, medoids, assignment, seed)
+    _, medoids, assignment, best_seed = best
+    return medoids, assignment, best_seed
