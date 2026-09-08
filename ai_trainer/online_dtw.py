@@ -35,6 +35,8 @@ import numpy as np
 import torch
 
 from .common_skeleton import COMMON_JOINT_NAMES
+from .dl_classifier import CLASSES as DL_CLASSES
+from .dl_classifier import DLSquatClassifier
 from .dtw_compare import PHASES, multi_reference_distance, resolve_weights
 from .features import extract_all_features
 from .lifting_dataset import WINDOW_T
@@ -72,6 +74,11 @@ class OnlineSquatSession:
     vel_eps: float = 0.004
     debounce_n: int = 3
     score_calib: dict | None = None
+    # REP 완료 시 최종 클래스 판정 담당(2026-09-08, actor 5-fold 교차검증: DL AP
+    # 95.8%+-1.5% vs DTW AP 88.8%+-7.4%로 DL이 크게 우세 — 사용자 결정: 순수 DL로
+    # 판정하고 DTW는 근거 텍스트(feature 기여도)용으로만 남긴다). None이면(체크포인트가
+    # 아직 로컬에 없는 경우 등) 기존 DTW 최근접 판정으로 자동 대체된다.
+    dl_classifier: DLSquatClassifier | None = None
 
     # --- 내부 상태 (push_frame이 갱신) ---
     raw2d_buffer: list = field(default_factory=list)  # 원본(정규화 전) common-skeleton 2D
@@ -319,12 +326,26 @@ class OnlineSquatSession:
         for cls, medoids in self.db_operational.items():
             w = resolve_weights(self.weights_cfg, self.weight_profile, class_label=cls)
             per_class[cls] = multi_reference_distance(feat, bounds, medoids, w, self.weights_cfg, top_k=2)
-        pred = min(per_class, key=lambda c: per_class[c]["min_distance"])
-        score = None
-        if self.score_calib is not None:
-            from .scoring import distance_to_score
+        dtw_pred = min(per_class, key=lambda c: per_class[c]["min_distance"])
 
-            score = distance_to_score(per_class["정상"]["min_distance"], self.score_calib)
+        # 최종 클래스 판정: DL 모델이 있으면 그쪽이 담당(actor 5-fold 교차검증 기준
+        # DTW보다 크게 우세, 위 dl_classifier 필드 주석 참고). phase가 너무 짧아
+        # DL이 신뢰 불가 판단(None)하면 기존 DTW 최근접 판정으로 자동 대체된다.
+        dl_probs = self.dl_classifier.predict_proba(feat, bounds) if self.dl_classifier is not None else None
+        if dl_probs is not None:
+            pred = DL_CLASSES[int(dl_probs.argmax())]
+            score = float(dl_probs[DL_CLASSES.index("정상")]) * 100.0
+        else:
+            pred = dtw_pred
+            score = None
+            if self.score_calib is not None:
+                from .scoring import distance_to_score
+
+                score = distance_to_score(per_class["정상"]["min_distance"], self.score_calib)
+
+        # 근거 텍스트(어떤 feature가 이 클래스 판정에 가장 크게 기여했는지)는 DL 사용
+        # 여부와 무관하게 항상 DTW의 phase-aware weighted 거리 분해에서 가져온다 — DL은
+        # 해석 가능한 근거를 주지 못하므로.
         top_feat = sorted(per_class[pred]["best_detail"]["per_feature_contrib"].items(), key=lambda kv: -kv[1])[:3]
 
         result = RepResult(
