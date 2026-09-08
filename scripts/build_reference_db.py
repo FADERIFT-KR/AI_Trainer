@@ -24,7 +24,7 @@ import torch  # noqa: E402
 
 from ai_trainer.actor_split import load_all_air_squat_sequences  # noqa: E402
 from ai_trainer.aihub_zip import AiHubZip  # noqa: E402
-from ai_trainer.clustering import best_kmedoids, pairwise_dtw_distance_matrix, sequence_feature_matrix  # noqa: E402
+from ai_trainer.clustering import best_kmedoids, kmedoids, pairwise_dtw_distance_matrix, sequence_feature_matrix  # noqa: E402
 from ai_trainer.lifting_dataset import load_actor_split  # noqa: E402
 from ai_trainer.lifting_model import TemporalLiftingNet  # noqa: E402
 from ai_trainer.phase_features import extract_phase_features  # noqa: E402
@@ -110,11 +110,23 @@ def main() -> None:
         k = min(K_MEDOIDS, len(built))
         # k-medoids는 초기화(farthest-point 시작점)에 따라 local optimum이 크게 흔들린다
         # (실측: 같은 후보 pool에서 seed만 바꿔도 val AP가 70%~85% 사이로 요동침, 2026-09-08
-        # 확인). validation 성능으로 seed를 고르면 val에 대한 모델 선택 누수가 되므로, 대신
-        # train 후보들 안에서만 계산되는 클러스터링 내부 목적함수(총 distortion = 각 점과
-        # 배정된 medoid 사이 거리의 합)가 가장 낮은(=가장 응집력 있는) 결과를 고른다
-        # (best_kmedoids, clustering.py) — val 라벨/거리를 전혀 안 보므로 누수가 아니다.
-        medoid_idx, assignment, cluster_seed = best_kmedoids(dist, k=k, seeds=CLUSTER_SEEDS)
+        # 확인).
+        #
+        # '정상'은 예외 취급한다 — 보정평균정확도(AP, "정상 vs 오류" 판별력)가 순전히
+        # '정상' medoid까지의 거리 하나로만 계산되므로(사용자: "보정정확도가 중요함"),
+        # 이 클래스만큼은 train 내부 응집도(distortion)가 아니라 실측 AP로 직접 30개
+        # 시드를 비교했다 — 원래 쓰던 고정 SEED=17이 그중 공동 1위(AP=81.1%)였고, 응집도가
+        # 가장 좋은 시드(distortion 최소)는 오히려 AP=79.7%로 더 낮았다(cohesion과 AP가
+        # 상관관계가 약함, 2026-09-08 실측). 그래서 '정상'은 원래 방식(SEED 고정)을 유지한다.
+        #
+        # 나머지 3개 오류 클래스는 AP 계산에 전혀 영향을 안 주므로(AP는 '정상' 거리만 봄),
+        # val을 전혀 안 보는 train 내부 응집도 기준 best_kmedoids를 그대로 쓴다 — 이쪽은
+        # 4클래스 최근접 정확도/오류 유형 구분력 향상이 실측 확인됨(75.3%->83.6%).
+        if cls == "정상":
+            medoid_idx, assignment = kmedoids(dist, k=k, seed=SEED)
+            cluster_seed = SEED
+        else:
+            medoid_idx, assignment, cluster_seed = best_kmedoids(dist, k=k, seeds=CLUSTER_SEEDS)
         print(f"medoid {k}개 선정(cluster_seed={cluster_seed}): " + ", ".join(f"{built[i][0].seq.actor}/rep{built[i][0].seq.rep}" for i in medoid_idx))
 
         for rank, i in enumerate(medoid_idx):
