@@ -19,6 +19,7 @@ import numpy as np
 import torch
 from PyQt5.QtCore import QThread, pyqtSignal
 
+from ai_trainer.dl_classifier import DLSquatClassifier
 from ai_trainer.joint_feedback import JointScore, compute_joint_scores
 from ai_trainer.live_pose.mediapipe_pose import MediaPipePoseDetector, PoseBackendError
 from ai_trainer.live_pose.render import draw_2d_pose
@@ -38,6 +39,8 @@ LIFTING_CKPT = ROOT / "output" / "lifting_baseline" / "model_best.pt"
 WEIGHTS_CFG_PATH = ROOT / "configs" / "dtw_feature_weights.json"
 DB_DIR = ROOT / "output" / "reference_db"
 OFFLINE_REPORT_PATH = ROOT / "output" / "dtw_eval" / "offline_eval_report.json"
+DL_CLASSIFIER_CKPT = ROOT / "output" / "dl_classifier" / "model.pt"
+DL_CLASSIFIER_NORM = ROOT / "output" / "dl_classifier" / "norm_stats.npz"
 
 
 @dataclass(frozen=True)
@@ -105,6 +108,18 @@ class SquatPipelineWorker(QThread):
                 # ground_truth tier 전용 calibration을 쓴다 (아래 3D bridge 설명 참고).
                 score_calib = json.loads(OFFLINE_REPORT_PATH.read_text(encoding="utf-8"))["score_calibration_ground_truth"]
 
+            # REP 완료 시 최종 클래스 판정은 이제 이 DL 모델이 담당한다(2026-09-08,
+            # actor 5-fold 교차검증: DL AP 95.8%+-1.5% vs DTW AP 88.8%+-7.4%로 DL 우세 —
+            # online_dtw.OnlineSquatSession.dl_classifier 필드 주석 참고). 체크포인트가
+            # 로컬에 아직 없으면(scripts/train_dl_classifier.py 실행 전) None으로 두고
+            # 기존 DTW 최근접 판정으로 자동 대체된다 — 앱이 죽지 않는다.
+            dl_classifier = None
+            if DL_CLASSIFIER_CKPT.exists() and DL_CLASSIFIER_NORM.exists():
+                dl_classifier = DLSquatClassifier.load(DL_CLASSIFIER_CKPT, DL_CLASSIFIER_NORM)
+            else:
+                print(f"[경고] DL 분류기 체크포인트 없음({DL_CLASSIFIER_CKPT}) — DTW 판정으로 대체합니다. "
+                      "python3 scripts/train_dl_classifier.py 실행 필요.")
+
             # 실시간 3D 소스: 자체 학습한 lifting 모델(model) 대신 MediaPipe 자체
             # world_landmarks를 쓴다 — 실제 아이폰 촬영 영상 검증에서, 학습 분포 밖
             # 체형/팔자세/화각을 만나면 lifting 모델이 스쿼트 깊이를 심하게 과소평가하는
@@ -116,7 +131,7 @@ class SquatPipelineWorker(QThread):
             # 영상이 없어 2D CSV -> 3D 복원이 유일한 방법).
             session = OnlineSquatSession(
                 model=lifting_model, device=device, db_operational=db["ground_truth"],
-                weights_cfg=weights_cfg, score_calib=score_calib,
+                weights_cfg=weights_cfg, score_calib=score_calib, dl_classifier=dl_classifier,
             )
 
             from .pose_bridge import CommonSkeleton3DBridge, CommonSkeletonBridge

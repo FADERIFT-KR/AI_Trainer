@@ -40,11 +40,14 @@ from ai_trainer.game_ui.joint_overlay import draw_joint_feedback  # noqa: E402
 from ai_trainer.game_ui.pipeline_worker import (  # noqa: E402
     DB_DIR,
     DEFAULT_MODEL_PATH,
+    DL_CLASSIFIER_CKPT,
+    DL_CLASSIFIER_NORM,
     LIFTING_CKPT,
     OFFLINE_REPORT_PATH,
     WEIGHTS_CFG_PATH,
 )
 from ai_trainer.game_ui.pose_bridge import CommonSkeleton3DBridge, CommonSkeletonBridge  # noqa: E402
+from ai_trainer.dl_classifier import DLSquatClassifier  # noqa: E402
 from ai_trainer.joint_feedback import compute_joint_scores  # noqa: E402
 from ai_trainer.lifting_model import TemporalLiftingNet  # noqa: E402
 from ai_trainer.live_pose.mediapipe_pose import MediaPipePoseDetector  # noqa: E402
@@ -86,11 +89,18 @@ def main() -> None:
     if OFFLINE_REPORT_PATH.exists():
         score_calib = json.loads(OFFLINE_REPORT_PATH.read_text(encoding="utf-8"))["score_calibration_ground_truth"]
 
+    # pipeline_worker.py와 동일: REP 완료 판정은 DL 모델이 담당(체크포인트 없으면 DTW로 대체).
+    dl_classifier = None
+    if DL_CLASSIFIER_CKPT.exists() and DL_CLASSIFIER_NORM.exists():
+        dl_classifier = DLSquatClassifier.load(DL_CLASSIFIER_CKPT, DL_CLASSIFIER_NORM)
+    else:
+        print(f"[경고] DL 분류기 체크포인트 없음({DL_CLASSIFIER_CKPT}) — DTW 판정으로 대체합니다.")
+
     # pipeline_worker.py와 동일: 실시간 3D 소스는 자체 lifting 모델이 아니라 MediaPipe
     # 자체 world_landmarks(CommonSkeleton3DBridge) — 그래서 비교 대상도 ground_truth tier.
     session = OnlineSquatSession(
         model=lifting_model, device=device, db_operational=db["ground_truth"],
-        weights_cfg=weights_cfg, score_calib=score_calib,
+        weights_cfg=weights_cfg, score_calib=score_calib, dl_classifier=dl_classifier,
     )
     bridge = CommonSkeletonBridge(min_visibility=args.confidence)  # 화면 그리기(2D)용
     bridge3d = CommonSkeleton3DBridge(min_visibility=args.confidence)  # 판정(3D)용
