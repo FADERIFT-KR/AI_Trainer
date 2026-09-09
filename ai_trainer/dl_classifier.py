@@ -14,6 +14,13 @@ DTW를 섞는 앙상블도 시도했지만 섞을수록 AP는 오히려 떨어�
 거리 분해를 계속 재사용한다(딥러닝 모델 자체는 "어떤 관절이 문제였는지" 같은
 해석 가능한 근거를 주지 못하므로).
 
+2026-09-10 추가 검증: 좌우 미러 증강(스쿼트는 좌우 대칭이라는 물리적 전제로 L/R
+각도를 맞바꿔 학습 데이터를 2배로 늘리는 것)은 실제로는 AP를 살짝 깎아서(95.7%->
+94.7%) 기각. 반대로 "같은 구조를 다른 시드 5개로 학습해 확률을 평균"하는 앙상블은
+AP를 올리면서(95.7%->96.2%) 표준편차를 절반으로 줄였다(±2.2%->±1.0%) — 모델이
+워낙 작아서(~7.7K 파라미터) 5개를 합쳐도 여전히 가볍다. 그래서 DLSquatClassifier는
+모델 여러 개를 들고 있다가 softmax 확률을 평균하는 방식으로 바뀌었다.
+
 입력은 원본 좌표가 아니라 이미 검증된 각도/속도 feature 8종만 쓴다(사용자 결정:
 "각도만 보는 게 보수적으로 맞다") — DDTW(features.py._keogh_derivative)에 쓴 것과
 동일한 기준각/미분이다. phase(준비/하강/최저점/상승/종료)마다 진행률 0~100%를
@@ -83,32 +90,56 @@ class SmallSquatCNN(nn.Module):
         return self.fc(z)
 
 
-class DLSquatClassifier:
-    """학습된 checkpoint + 정규화 통계(mu/sigma, train set에서만 계산)를 로드해
-    완료된 REP 하나를 4클래스 확률로 분류한다."""
+DEFAULT_ENSEMBLE_SIZE = 5
 
-    def __init__(self, model: SmallSquatCNN, mu: np.ndarray, sigma: np.ndarray):
-        self.model = model
-        self.model.eval()
+
+class DLSquatClassifier:
+    """학습된 checkpoint(들) + 정규화 통계(mu/sigma, train set에서만 계산)를 로드해
+    완료된 REP 하나를 4클래스 확률로 분류한다. 모델을 여러 개(ensemble) 들고 있으면
+    softmax 확률을 평균한다 — 검증된 대로(2026-09-10) 단일 모델보다 AP가 높고
+    표준편차가 절반이라 훨씬 안정적이다."""
+
+    def __init__(self, models: list[SmallSquatCNN], mu: np.ndarray, sigma: np.ndarray):
+        self.models = models
+        for m in self.models:
+            m.eval()
         self.mu = mu
         self.sigma = sigma
 
     @classmethod
-    def load(cls, checkpoint_path: str | Path, norm_path: str | Path) -> "DLSquatClassifier":
-        model = SmallSquatCNN()
-        model.load_state_dict(torch.load(checkpoint_path, map_location="cpu"))
+    def load(cls, checkpoint_dir: str | Path, norm_path: str | Path | None = None) -> "DLSquatClassifier":
+        """checkpoint_dir: model_0.pt, model_1.pt, ... 를 담은 디렉터리(구버전 호환:
+        checkpoint_dir이 단일 .pt 파일 경로면 모델 1개짜리로 취급). norm_path 생략 시
+        checkpoint_dir과 같은 디렉터리의 norm_stats.npz를 쓴다."""
+        checkpoint_dir = Path(checkpoint_dir)
+        if checkpoint_dir.is_file():
+            # 구버전 단일 체크포인트 경로 호환
+            model = SmallSquatCNN()
+            model.load_state_dict(torch.load(checkpoint_dir, map_location="cpu"))
+            models = [model]
+            norm_path = norm_path or checkpoint_dir.with_name("norm_stats.npz")
+        else:
+            paths = sorted(checkpoint_dir.glob("model_*.pt"))
+            if not paths:
+                raise FileNotFoundError(f"{checkpoint_dir}에 model_*.pt 체크포인트가 없습니다.")
+            models = []
+            for p in paths:
+                m = SmallSquatCNN()
+                m.load_state_dict(torch.load(p, map_location="cpu"))
+                models.append(m)
+            norm_path = norm_path or checkpoint_dir / "norm_stats.npz"
         norm = np.load(norm_path)
-        return cls(model, norm["mu"], norm["sigma"])
+        return cls(models, norm["mu"], norm["sigma"])
 
     def predict_proba(self, feat: dict[str, np.ndarray], bounds: dict) -> np.ndarray | None:
-        """반환: CLASSES 순서의 (4,) softmax 확률. phase가 너무 짧아 신뢰할 수 없는
-        REP면 None(호출부는 이 경우 DTW로 fallback해야 한다)."""
+        """반환: CLASSES 순서의 (4,) softmax 확률(앙상블 평균). phase가 너무 짧아
+        신뢰할 수 없는 REP면 None(호출부는 이 경우 DTW로 fallback해야 한다)."""
         vec = build_fixed_vector(feat, bounds)
         if vec is None:
             return None
         x = vec.T[None, :, :]  # (1, in_ch, T)
         x = (x - self.mu) / self.sigma
+        x_t = torch.tensor(x, dtype=torch.float32)
         with torch.no_grad():
-            logits = self.model(torch.tensor(x, dtype=torch.float32))
-            probs = torch.softmax(logits, dim=1).numpy()[0]
+            probs = np.mean([torch.softmax(m(x_t), dim=1).numpy()[0] for m in self.models], axis=0)
         return probs

@@ -39,8 +39,7 @@ LIFTING_CKPT = ROOT / "output" / "lifting_baseline" / "model_best.pt"
 WEIGHTS_CFG_PATH = ROOT / "configs" / "dtw_feature_weights.json"
 DB_DIR = ROOT / "output" / "reference_db"
 OFFLINE_REPORT_PATH = ROOT / "output" / "dtw_eval" / "offline_eval_report.json"
-DL_CLASSIFIER_CKPT = ROOT / "output" / "dl_classifier" / "model.pt"
-DL_CLASSIFIER_NORM = ROOT / "output" / "dl_classifier" / "norm_stats.npz"
+DL_CLASSIFIER_DIR = ROOT / "output" / "dl_classifier"  # model_0.pt..model_N.pt + norm_stats.npz
 
 
 @dataclass(frozen=True)
@@ -114,10 +113,10 @@ class SquatPipelineWorker(QThread):
             # 로컬에 아직 없으면(scripts/train_dl_classifier.py 실행 전) None으로 두고
             # 기존 DTW 최근접 판정으로 자동 대체된다 — 앱이 죽지 않는다.
             dl_classifier = None
-            if DL_CLASSIFIER_CKPT.exists() and DL_CLASSIFIER_NORM.exists():
-                dl_classifier = DLSquatClassifier.load(DL_CLASSIFIER_CKPT, DL_CLASSIFIER_NORM)
+            if list(DL_CLASSIFIER_DIR.glob("model_*.pt")):
+                dl_classifier = DLSquatClassifier.load(DL_CLASSIFIER_DIR)
             else:
-                print(f"[경고] DL 분류기 체크포인트 없음({DL_CLASSIFIER_CKPT}) — DTW 판정으로 대체합니다. "
+                print(f"[경고] DL 분류기 체크포인트 없음({DL_CLASSIFIER_DIR}) — DTW 판정으로 대체합니다. "
                       "python3 scripts/train_dl_classifier.py 실행 필요.")
 
             # 실시간 3D 소스: 자체 학습한 lifting 모델(model) 대신 MediaPipe 자체
