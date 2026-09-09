@@ -40,8 +40,7 @@ from ai_trainer.game_ui.joint_overlay import draw_joint_feedback  # noqa: E402
 from ai_trainer.game_ui.pipeline_worker import (  # noqa: E402
     DB_DIR,
     DEFAULT_MODEL_PATH,
-    DL_CLASSIFIER_CKPT,
-    DL_CLASSIFIER_NORM,
+    DL_CLASSIFIER_DIR,
     LIFTING_CKPT,
     OFFLINE_REPORT_PATH,
     WEIGHTS_CFG_PATH,
@@ -89,12 +88,12 @@ def main() -> None:
     if OFFLINE_REPORT_PATH.exists():
         score_calib = json.loads(OFFLINE_REPORT_PATH.read_text(encoding="utf-8"))["score_calibration_ground_truth"]
 
-    # pipeline_worker.py와 동일: REP 완료 판정은 DL 모델이 담당(체크포인트 없으면 DTW로 대체).
+    # pipeline_worker.py와 동일: REP 완료 판정은 DL 모델(앙상블)이 담당(체크포인트 없으면 DTW로 대체).
     dl_classifier = None
-    if DL_CLASSIFIER_CKPT.exists() and DL_CLASSIFIER_NORM.exists():
-        dl_classifier = DLSquatClassifier.load(DL_CLASSIFIER_CKPT, DL_CLASSIFIER_NORM)
+    if list(DL_CLASSIFIER_DIR.glob("model_*.pt")):
+        dl_classifier = DLSquatClassifier.load(DL_CLASSIFIER_DIR)
     else:
-        print(f"[경고] DL 분류기 체크포인트 없음({DL_CLASSIFIER_CKPT}) — DTW 판정으로 대체합니다.")
+        print(f"[경고] DL 분류기 체크포인트 없음({DL_CLASSIFIER_DIR}) — DTW 판정으로 대체합니다.")
 
     # pipeline_worker.py와 동일: 실시간 3D 소스는 자체 lifting 모델이 아니라 MediaPipe
     # 자체 world_landmarks(CommonSkeleton3DBridge) — 그래서 비교 대상도 ground_truth tier.
