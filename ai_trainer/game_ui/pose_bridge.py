@@ -81,3 +81,23 @@ class CommonSkeletonBridge:
                     out[i] = raw[i]
 
         return out, frozen, float(np.mean(conf))
+
+
+def world_to_common_skeleton(world_landmarks: np.ndarray) -> np.ndarray:
+    """MediaPipe world 33점에서 매칭용 공통 skeleton 18점으로 변환한다."""
+    points = np.asarray(world_landmarks, dtype=np.float32)
+    if points.ndim != 2 or points.shape[0] < 33 or points.shape[1] < 3:
+        raise ValueError(f"world_landmarks must have shape (33, >=3), got {points.shape}")
+    out = np.zeros((len(COMMON_JOINT_NAMES), points.shape[1]), dtype=np.float32)
+    for i, name in enumerate(COMMON_JOINT_NAMES):
+        if name == "Hip":
+            l, r = _MP_INDEX["LEFT_HIP"], _MP_INDEX["RIGHT_HIP"]
+            out[i] = (points[l] + points[r]) / 2.0
+            out[i, 3] = min(points[l, 3], points[r, 3]) if points.shape[1] >= 4 else 1.0
+        elif name == "Neck":
+            l, r = _MP_INDEX["LEFT_SHOULDER"], _MP_INDEX["RIGHT_SHOULDER"]
+            out[i] = (points[l] + points[r]) / 2.0
+            out[i, 3] = min(points[l, 3], points[r, 3]) if points.shape[1] >= 4 else 1.0
+        else:
+            out[i] = points[_DIRECT_MP_IDX[name]]
+    return out

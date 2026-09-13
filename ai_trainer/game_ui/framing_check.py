@@ -30,10 +30,9 @@ REQUIRED_LANDMARK_NAMES = {
 }
 
 # 프레임 대비 이상적인 전신 bbox 비율 (정면에서 2~3m 거리 기준 목표치)
-MIN_BODY_HEIGHT_RATIO = 0.50
+# 안내 박스 크기 호환용(거리 판정에는 사용하지 않음)
 MAX_BODY_HEIGHT_RATIO = 0.92
 EDGE_MARGIN_RATIO = 0.02
-CENTER_TOLERANCE_RATIO = 0.20
 MIN_VISIBILITY = 0.4
 MIN_FRONTAL_HIP_RATIO = 0.07  # |LHip_x-RHip_x| / body_bbox_width, 이보다 작으면 옆모습으로 판단
 
@@ -45,6 +44,7 @@ class FramingResult:
     guide_box: tuple[int, int, int, int]  # 화면에 그릴 목표 영역 (x0,y0,x1,y1)
     body_box: tuple[int, int, int, int] | None  # 실제 감지된 전신 bbox (있으면)
     low_confidence_joints: tuple[tuple[str, float], ...] = ()  # 진단용: (관절명, visibility) 임계값 미달 목록
+    body_scale: float | None = None  # 어깨·상체·골반 복합 스케일(화면 정규화)
 
 
 def guide_box(width: int, height: int) -> tuple[int, int, int, int]:
@@ -55,7 +55,12 @@ def guide_box(width: int, height: int) -> tuple[int, int, int, int]:
     return x0, y0, x1, y1
 
 
-def check_framing(image_landmarks: np.ndarray, width: int, height: int) -> FramingResult:
+def check_framing(
+    image_landmarks: np.ndarray,
+    width: int,
+    height: int,
+    reference_body_height_ratio: float | None = None,
+) -> FramingResult:
     box = guide_box(width, height)
     xs = image_landmarks[:, 0] * width
     ys = image_landmarks[:, 1] * height
@@ -80,28 +85,37 @@ def check_framing(image_landmarks: np.ndarray, width: int, height: int) -> Frami
     x0b, x1b = float(xs[list(used)].min()), float(xs[list(used)].max())
     y0b, y1b = float(ys[list(used)].min()), float(ys[list(used)].max())
     body_box = (int(x0b), int(y0b), int(x1b), int(y1b))
-    body_h = y1b - y0b
     body_w = max(x1b - x0b, 1.0)
 
+    body_h = max(y1b - y0b, 1.0)
+    body_scale = float(body_h / height)
+
     if x0b <= width * EDGE_MARGIN_RATIO or x1b >= width * (1 - EDGE_MARGIN_RATIO):
-        return FramingResult(False, "몸이 화면 가장자리에 걸려있어요 — 카메라에서 조금 물러나주세요", box, body_box, low_conf)
+        return FramingResult(False, "몸이 화면 가장자리에 걸려있어요 — 카메라에서 조금 물러나주세요", box, body_box, low_conf, body_scale)
     if y0b <= height * EDGE_MARGIN_RATIO or y1b >= height * (1 - EDGE_MARGIN_RATIO):
-        return FramingResult(False, "머리나 발이 화면에 잘려요 — 카메라에서 조금 물러나주세요", box, body_box, low_conf)
+        return FramingResult(False, "머리나 발이 화면에 잘려요 — 카메라에서 조금 물러나주세요", box, body_box, low_conf, body_scale)
 
-    height_ratio = body_h / height
-    if height_ratio < MIN_BODY_HEIGHT_RATIO:
-        return FramingResult(False, "카메라에 조금 더 가까이 서주세요", box, body_box, low_conf)
-    if height_ratio > MAX_BODY_HEIGHT_RATIO:
-        return FramingResult(False, "카메라에서 조금 더 물러나주세요", box, body_box, low_conf)
-
-    center_x = (x0b + x1b) / 2
-    if center_x < width * (0.5 - CENTER_TOLERANCE_RATIO):
-        return FramingResult(False, "오른쪽으로 조금 이동해주세요", box, body_box, low_conf)
-    if center_x > width * (0.5 + CENTER_TOLERANCE_RATIO):
-        return FramingResult(False, "왼쪽으로 조금 이동해주세요", box, body_box, low_conf)
+    # 바운딩 박스와 필수 관절이 검출되면 카메라 거리(신체 크기)는 판정하지 않는다.
+    # reference_body_height_ratio 인자는 기존 호출 호환을 위해 유지한다.
 
     hip_sep = abs(xs[L_HIP] - xs[R_HIP])
     if hip_sep / body_w < MIN_FRONTAL_HIP_RATIO:
-        return FramingResult(False, "카메라를 정면으로 봐주세요 (옆모습으로는 분석이 어려워요)", box, body_box, low_conf)
+        return FramingResult(False, "카메라를 정면으로 봐주세요 (옆모습으로는 분석이 어려워요)", box, body_box, low_conf, body_scale)
 
-    return FramingResult(True, "준비 완료 — 스쿼트를 시작하세요", box, body_box, low_conf)
+    return FramingResult(True, "준비 완료 — 스쿼트를 시작하세요", box, body_box, low_conf, body_scale)
+
+
+def check_pose_visibility(image_landmarks: np.ndarray, width: int, height: int) -> FramingResult:
+    """반복 진행 중 거리/중심은 고정하고, 필수 관절 인식만 확인한다."""
+    box = guide_box(width, height)
+    vis = image_landmarks[:, 3]
+    low_conf = tuple(
+        (REQUIRED_LANDMARK_NAMES[i], float(vis[i])) for i in REQUIRED_LANDMARKS if vis[i] < MIN_VISIBILITY
+    )
+    if low_conf:
+        if any(i in (L_ANKLE, R_ANKLE, L_HEEL, R_HEEL) for i in (j for j, _ in low_conf)):
+            msg = "발목·발뒤꿈치 인식이 불안정해요 — 발이 가려지지 않게 해주세요"
+        else:
+            msg = "관절 인식이 불안정해요 — 조명을 밝히고 전신이 보이게 해주세요"
+        return FramingResult(False, msg, box, None, low_conf)
+    return FramingResult(True, "스쿼트 진행 중", box, None, ())

@@ -22,27 +22,62 @@ from pathlib import Path
 
 import numpy as np
 
+from ..reference_levels import DIFFICULTY_LEVELS, NORMAL_CLASS, validate_difficulty_level
+
 ROOT = Path(__file__).resolve().parent.parent.parent
 DB_DIR = ROOT / "output" / "reference_db"
 
 REFERENCE_FPS = 30.0  # AI Hub 원본 캡처 fps (검증 완료, claude.md 7장) — 재생 타이머 주기로 사용
 
 
+def _manifest_entries() -> list[dict]:
+    return json.loads((DB_DIR / "manifest.json").read_text(encoding="utf-8"))["entries"]
+
+
+def _medoid_rank(entry: dict) -> int:
+    """v2의 명시적 rank를 우선하고, 구 manifest ID 형식은 fallback으로 지원한다."""
+    if "medoid_rank" in entry:
+        return int(entry["medoid_rank"])
+    try:
+        return int(entry["medoid_id"].split("_")[1])
+    except (KeyError, IndexError, TypeError, ValueError) as error:
+        raise ValueError(f"Reference DB entry의 medoid rank를 해석할 수 없습니다: {entry!r}") from error
+
+
 class ReferenceTrack:
-    def __init__(self, class_label: str = "정상", medoid_rank: int = 0, tier: str = "ground_truth"):
-        manifest = json.loads((DB_DIR / "manifest.json").read_text(encoding="utf-8"))["entries"]
-        arrays = np.load(DB_DIR / "sequences.npz")
+    def __init__(
+        self,
+        class_label: str = NORMAL_CLASS,
+        medoid_rank: int = 0,
+        tier: str = "ground_truth",
+        difficulty_level: str | None = None,
+    ):
+        level = (
+            validate_difficulty_level(difficulty_level)
+            if difficulty_level is not None
+            else None
+        )
+        manifest = _manifest_entries()
 
         entry = None
         for e in manifest:
-            rank = int(e["medoid_id"].split("_")[1])
-            if e["class_label"] == class_label and rank == medoid_rank and e["tier"] == tier:
+            if e.get("class_label") != class_label or e.get("tier") != tier:
+                continue
+            if level is not None and e.get("difficulty_level") != level:
+                continue
+            if _medoid_rank(e) == medoid_rank:
                 entry = e
                 break
         if entry is None:
-            raise ValueError(f"Reference DB에 {class_label} medoid #{medoid_rank} ({tier})가 없습니다.")
+            level_text = f", 난이도={level}" if level is not None else ""
+            raise ValueError(
+                f"Reference DB에 {class_label} medoid #{medoid_rank} "
+                f"({tier}{level_text})가 없습니다."
+            )
 
-        self.coords = arrays[entry["array_key"]]  # (T,18,3) 정규화(Hip-center+Scale+Orientation) 완료
+        with np.load(DB_DIR / "sequences.npz") as arrays:
+            # NpzFile context가 닫힌 뒤에도 안전하게 사용할 수 있도록 소유 배열로 복사한다.
+            self.coords = arrays[entry["array_key"]].copy()
         self.bounds: dict[str, tuple[int, int]] = {p: tuple(v) for p, v in entry["phase_boundaries"].items()}
         self.meta = entry
         self._cursor = 0
@@ -65,6 +100,14 @@ class ReferenceTrack:
     def current_frame(self) -> int:
         return self._cursor
 
+    def phase_bounds_by_index(self, phase_index: int) -> tuple[int, int]:
+        """저장된 phase 순서(준비·하강·최저점·상승·완료)로 구간을 반환한다."""
+        values = list(self.bounds.values())
+        if phase_index < 0 or phase_index >= len(values):
+            return (0, self.coords.shape[0])
+        start, end = values[phase_index]
+        return max(0, int(start)), min(self.coords.shape[0], int(end))
+
     def phase_at(self, t: int | None = None) -> str:
         t = self._cursor if t is None else t
         for phase, (s, e) in self.bounds.items():
@@ -73,8 +116,34 @@ class ReferenceTrack:
         return "-"
 
 
-def list_available(tier: str = "ground_truth") -> list[tuple[str, int]]:
-    manifest = json.loads((DB_DIR / "manifest.json").read_text(encoding="utf-8"))["entries"]
-    return sorted(
-        {(e["class_label"], int(e["medoid_id"].split("_")[1])) for e in manifest if e["tier"] == tier}
+def list_available(
+    tier: str = "ground_truth",
+    difficulty_level: str | None = None,
+) -> list[tuple[str, int]]:
+    """사용 가능한 ``(class_label, medoid_rank)`` 목록을 반환한다."""
+    level = (
+        validate_difficulty_level(difficulty_level)
+        if difficulty_level is not None
+        else None
     )
+    available = set()
+    for entry in _manifest_entries():
+        if entry.get("tier") != tier:
+            continue
+        if level is not None and entry.get("difficulty_level") != level:
+            continue
+        available.add((entry["class_label"], _medoid_rank(entry)))
+    return sorted(available)
+
+
+def create_normal_tracks(tier: str = "ground_truth") -> dict[str, ReferenceTrack]:
+    """초급·중급·고급의 정상 rank-0 트랙을 모두 로드한다."""
+    return {
+        level: ReferenceTrack(
+            class_label=NORMAL_CLASS,
+            medoid_rank=0,
+            tier=tier,
+            difficulty_level=level,
+        )
+        for level in DIFFICULTY_LEVELS
+    }

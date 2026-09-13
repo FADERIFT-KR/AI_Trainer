@@ -16,16 +16,54 @@
     "left_right_asymmetry": {"dim": 4, "unit": "deg/180 또는 leg_length 정규화 절대차", "metric": "euclidean", "desc": "|knee_L-knee_R|,|hip_L-hip_R|,|heel_L-heel_R|,|ankle_L-ankle_R|"}
   },
   "phase_weights": {"준비": 0.5, "하강": 1.0, "최저점": 1.5, "상승": 1.0, "종료": 0.5},
+  "class_phase_weights": {
+    "발뒤꿈치오류": {"준비": 0.25, "하강": 1.0, "최저점": 2.0, "상승": 1.5, "종료": 0.25},
+    "엉덩이하방오류": {"준비": 0.25, "하강": 0.75, "최저점": 3.0, "상승": 0.75, "종료": 0.25},
+    "고관절오류": {"준비": 0.5, "하강": 1.5, "최저점": 2.0, "상승": 1.0, "종료": 0.5}
+  },
+  "dtw_alignment": {
+    "phase_resample_frames": {"준비": 12, "하강": 24, "최저점": 12, "상승": 24, "종료": 12},
+    "warping_window_ratio": 0.25,
+    "max_phase_length_ratio": 3.25,
+    "max_phase_length_ratio_note": "actor-disjoint validation 66시퀀스에서 ratio별 threshold와 rejection을 재보정해 선택한 잠정값. 3.0 대비 정상/오류 이진 정확도 74.24%→75.76%, 4-class 정확도 51.52%→54.55%, 정상 recall 58.33%→62.50%, 오류 recall 83.33% 유지."
+  },
+  "partial_normal_distance_thresholds": {
+    "하강": 0.2783217901,
+    "최저점": 0.3932401578,
+    "상승": 0.3140863546
+  },
+  "partial_threshold_note": "ratio 3.25용 완료 판정과 실시간 임시 판정의 불일치를 줄이도록 reference actor와 분리된 calibration actor 15명/116시퀀스에서 선택하고 validation actor 9명/66시퀀스로 검증. 전체 동작 threshold에는 적용하지 않음.",
+  "calibration_augmentation": {
+    "enabled": true,
+    "seed": 20260908,
+    "min_group_cv_objective_gain": 0.01,
+    "excluded_classes": ["고관절오류"],
+    "note": "원본 actor ID를 유지한 train-fold 전용 증강. 고관절오류는 실제 데이터 추가가 필요해 증강하지 않음.",
+    "variants": [
+      {"name": "slow_yaw_left", "duration_scale": 1.20, "yaw_deg": -5.0, "jitter_std": 0.003, "jitter_smoothing": 0.80},
+      {"name": "fast_yaw_right", "duration_scale": 0.80, "yaw_deg": 5.0, "jitter_std": 0.003, "jitter_smoothing": 0.80},
+      {"name": "mild_pose_jitter", "duration_scale": 1.00, "yaw_deg": 0.0, "jitter_std": 0.006, "jitter_smoothing": 0.85}
+    ]
+  },
+  "rejection": {
+    "error_distance_scale_from_normal": 1.5,
+    "min_error_relative_margin": 0.05,
+    "use_binary_classifier": true,
+    "use_error_distance_normalization": true,
+    "heel_lift_overrides_normal": true,
+    "heel_lift_selects_heel_error": true,
+    "stable_heel_suppresses_heel_error": true
+  },
   "base_weights": {
     "joint_coords_3d": 1.0, "knee_flexion_angle": 1.0, "hip_flexion_angle": 1.0,
-    "ankle_angle": 0.5, "torso_inclination": 1.0, "bone_direction_vectors": 0.5,
-    "joint_velocity": 0.5, "pelvis_trajectory": 1.0, "heel_height": 0.5,
+    "ankle_angle": 0.0, "torso_inclination": 1.0, "bone_direction_vectors": 0.5,
+    "joint_velocity": 0.0, "pelvis_trajectory": 0.0, "heel_height": 0.5,
     "knee_toe_alignment": 0.5, "left_right_asymmetry": 0.5
   },
   "uniform_weights": {
     "joint_coords_3d": 1.0, "knee_flexion_angle": 1.0, "hip_flexion_angle": 1.0,
-    "ankle_angle": 1.0, "torso_inclination": 1.0, "bone_direction_vectors": 1.0,
-    "joint_velocity": 1.0, "pelvis_trajectory": 1.0, "heel_height": 1.0,
+    "ankle_angle": 0.0, "torso_inclination": 1.0, "bone_direction_vectors": 1.0,
+    "joint_velocity": 0.0, "pelvis_trajectory": 0.0, "heel_height": 1.0,
     "knee_toe_alignment": 1.0, "left_right_asymmetry": 1.0
   },
   "class_overrides": {

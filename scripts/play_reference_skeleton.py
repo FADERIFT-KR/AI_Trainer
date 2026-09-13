@@ -62,18 +62,31 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def load_from_reference_db(class_label: str, medoid_rank: int, tier: str) -> tuple[np.ndarray, dict, str]:
+def load_from_reference_db(
+    class_label: str, medoid_rank: int, tier: str, difficulty_level: str | None = None
+) -> tuple[np.ndarray, dict, str]:
     manifest = json.loads((DB_DIR / "manifest.json").read_text(encoding="utf-8"))["entries"]
     arrays = np.load(DB_DIR / "sequences.npz")
 
     for e in manifest:
-        rank = int(e["medoid_id"].split("_")[1])
-        if e["class_label"] == class_label and rank == medoid_rank and e["tier"] == tier:
+        rank = int(e["medoid_rank"]) if "medoid_rank" in e else int(e["medoid_id"].split("_")[1])
+        if (
+            e["class_label"] == class_label
+            and rank == medoid_rank
+            and e["tier"] == tier
+            and (difficulty_level is None or e.get("difficulty_level") == difficulty_level)
+        ):
             coords = arrays[e["array_key"]]
             title = f"{class_label} #{medoid_rank} ({tier}) actor={e['actor_id']} level={e['difficulty_level']}"
             return coords, e["phase_boundaries"], title
 
-    available = sorted({(e["class_label"], e["medoid_id"].split("_")[1]) for e in manifest if e["tier"] == tier})
+    available = sorted(
+        {
+            (e["class_label"], e.get("difficulty_level"), e.get("medoid_rank", e["medoid_id"].split("_")[1]))
+            for e in manifest
+            if e["tier"] == tier
+        }
+    )
     raise SystemExit(
         f"[오류] Reference DB에 {class_label} medoid #{medoid_rank} ({tier})가 없습니다.\n"
         f"사용 가능한 조합: {available}"
@@ -111,7 +124,9 @@ def main() -> None:
     if args.zip:
         coords, bounds, title = load_from_zip(args)
     else:
-        coords, bounds, title = load_from_reference_db(args.class_label, args.medoid_rank, args.tier)
+        coords, bounds, title = load_from_reference_db(
+            args.class_label, args.medoid_rank, args.tier, args.level
+        )
 
     print(f"재생: {title}  ({coords.shape[0]}프레임, {args.fps}fps 반복재생)")
     print("웹캠/MediaPipe/DTW 파이프라인은 사용하지 않음 — 순수 AI Hub 데이터 재생")

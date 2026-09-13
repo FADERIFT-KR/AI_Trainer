@@ -16,8 +16,8 @@ from .mediapipe_pose import MediaPipePoseDetector, PoseBackendError
 @dataclass(frozen=True)
 class CameraConfig:
     camera_index: int = 0
-    width: int = 1280
-    height: int = 720
+    width: int = 640
+    height: int = 480
     requested_fps: int = 30
     mirror: bool = True
     skeleton_width: int = 640

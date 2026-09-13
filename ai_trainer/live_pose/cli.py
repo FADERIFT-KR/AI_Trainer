@@ -18,8 +18,8 @@ def make_parser() -> argparse.ArgumentParser:
         default=Path("models/pose_landmarker_full.task"),
         help="Local MediaPipe Pose Landmarker .task bundle",
     )
-    parser.add_argument("--width", type=int, default=1280)
-    parser.add_argument("--height", type=int, default=720)
+    parser.add_argument("--width", type=int, default=640)
+    parser.add_argument("--height", type=int, default=480)
     parser.add_argument("--fps", type=int, default=30)
     parser.add_argument("--confidence", type=float, default=0.5)
     parser.add_argument("--no-mirror", action="store_true", help="Disable selfie-view mirroring")

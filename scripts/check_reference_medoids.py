@@ -27,6 +27,13 @@ OUT_PATH = DB_DIR / "medoid_check.png"
 
 PANEL_W, PANEL_H = 260, 320
 CLASSES = ["정상", "발뒤꿈치오류", "엉덩이하방오류", "고관절오류"]
+LEVELS = ["초급", "중급", "고급"]
+
+
+def medoid_rank(entry: dict) -> int:
+    if "medoid_rank" in entry:
+        return int(entry["medoid_rank"])
+    return int(entry["medoid_id"].split("_")[1])
 
 
 def main() -> None:
@@ -35,16 +42,16 @@ def main() -> None:
 
     by_class_rank: dict[tuple[str, int], dict[str, dict]] = {}
     for e in manifest:
-        rank = int(e["medoid_id"].split("_")[1])
-        key = (e["class_label"], rank)
+        rank = medoid_rank(e)
+        key = (e["class_label"], e.get("difficulty_level", ""), rank)
         by_class_rank.setdefault(key, {})[e["tier"]] = e
 
-    k = max(r for _, r in by_class_rank.keys()) + 1
-    canvas = np.zeros((PANEL_H * len(CLASSES), PANEL_W * k, 3), dtype=np.uint8)
+    k = max(r for _, _, r in by_class_rank.keys()) + 1
+    canvas = np.zeros((PANEL_H * len(CLASSES) * len(LEVELS), PANEL_W * k, 3), dtype=np.uint8)
 
-    for row, cls in enumerate(CLASSES):
+    for row, (cls, level) in enumerate((c, l) for c in CLASSES for l in LEVELS):
         for rank in range(k):
-            entry = by_class_rank.get((cls, rank))
+            entry = by_class_rank.get((cls, level, rank))
             if not entry:
                 continue
             gt_e = entry.get("ground_truth")
@@ -60,7 +67,7 @@ def main() -> None:
             gt_pts = gt_coords[bottom_t][:, [0, 1]]  # lateral-vertical
 
             tf = fit_transform(gt_coords[:, :, [0, 1]], PANEL_W, PANEL_H, flip_y=True)
-            title = f"{cls[:4]} #{rank} {gt_e['actor_id']}"
+            title = f"{level[:2]} {cls[:3]} #{rank} {gt_e['actor_id']}"
             footer = f"n_cluster={gt_e['cluster_size']}"
             draw_skeleton_panel(canvas, (x0, y0), PANEL_W, PANEL_H, tf(gt_pts), title, footer, COMMON_BONE_INDEX_PAIRS)
 

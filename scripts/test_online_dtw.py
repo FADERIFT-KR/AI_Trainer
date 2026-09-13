@@ -28,12 +28,15 @@ from ai_trainer.common_skeleton import to_common_skeleton  # noqa: E402
 from ai_trainer.dataset_config import DATASET_PATH  # noqa: E402
 from ai_trainer.dtw_compare import multi_reference_distance, resolve_weights  # noqa: E402
 from ai_trainer.features import extract_all_features  # noqa: E402
+from ai_trainer.heel_contact import estimate_sequence_heel_contact  # noqa: E402
 from ai_trainer.lifting_dataset import load_actor_split  # noqa: E402
 from ai_trainer.lifting_model import TemporalLiftingNet  # noqa: E402
 from ai_trainer.online_dtw import OnlineSquatSession  # noqa: E402
 from ai_trainer.phase_features import extract_phase_features  # noqa: E402
 from ai_trainer.phase_segmentation import segment_phases  # noqa: E402
-from ai_trainer.reference_db_io import load_reference_db  # noqa: E402
+from ai_trainer.reference_db_io import load_reference_db_by_level  # noqa: E402
+from ai_trainer.reference_levels import DIFFICULTY_LEVELS, REFERENCE_CLASSES  # noqa: E402
+from ai_trainer.reference_matching import decide_reference_match  # noqa: E402
 from ai_trainer.reference_pipeline import build_operational_reference  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -46,18 +49,42 @@ CLASSES = ["정상", "발뒤꿈치오류", "엉덩이하방오류", "고관절�
 N_TEST_SEQS = 6
 
 
-def offline_predict(z, seq, origin, model, device, db, weights_cfg):
+def offline_predict(z, seq, origin, model, device, db, weights_cfg, algorithm: str = "dtw"):
     ref = build_operational_reference(z, seq, origin, model, device)
     if ref is None:
         return None
     feat = extract_all_features(ref.coords)
     bounds = segment_phases(extract_phase_features(ref.coords)).as_dict()
-    per_class = {}
-    for cls, medoids in db["operational"].items():
-        w = resolve_weights(weights_cfg, weights_cfg["default_profile"], class_label=cls)
-        per_class[cls] = multi_reference_distance(feat, bounds, medoids, w, weights_cfg, top_k=2)
-    pred = min(per_class, key=lambda c: per_class[c]["min_distance"])
-    return {"predicted_class": pred, "raw_distance_by_class": {c: per_class[c]["min_distance"] for c in CLASSES}}
+    per_level = {}
+    for level in DIFFICULTY_LEVELS:
+        per_level[level] = {}
+        for cls in REFERENCE_CLASSES:
+            w = resolve_weights(weights_cfg, weights_cfg["default_profile"], class_label=cls)
+            per_level[level][cls] = multi_reference_distance(
+                feat,
+                bounds,
+                db["operational"][level][cls],
+                w,
+                weights_cfg,
+                top_k=2,
+                algorithm=algorithm,
+                class_label=cls,
+            )
+    heel_contact_2d, _ = (
+        estimate_sequence_heel_contact(ref.image_coords_2d, bounds.get("준비"))
+        if ref.image_coords_2d is not None
+        else (None, None)
+    )
+    decision = decide_reference_match(
+        per_level,
+        heel_contact_2d=heel_contact_2d,
+        rejection_config=weights_cfg.get("rejection"),
+    )
+    return {
+        "predicted_class": decision.predicted_class,
+        "matched_level": decision.matched_level,
+        "raw_distance_by_class": decision.raw_distance_by_class,
+    }
 
 
 def main() -> None:
@@ -67,10 +94,13 @@ def main() -> None:
     model.to(device).eval()
 
     weights_cfg = json.loads(WEIGHTS_CFG_PATH.read_text(encoding="utf-8"))
-    db = load_reference_db(DB_DIR)
+    db = load_reference_db_by_level(DB_DIR)
     score_calib = None
+    algorithm = "dtw"
     if OFFLINE_REPORT_PATH.exists():
-        score_calib = json.loads(OFFLINE_REPORT_PATH.read_text(encoding="utf-8"))["score_calibration"]
+        report = json.loads(OFFLINE_REPORT_PATH.read_text(encoding="utf-8"))
+        score_calib = report["score_calibration"]
+        algorithm = report.get("algorithm", "dtw")
 
     actor_to_split = load_actor_split(SPLIT_PATH)
     all_seqs = load_air_squat_sequences(DATASET_PATH)
@@ -104,6 +134,7 @@ def main() -> None:
         session = OnlineSquatSession(
             model=model, device=device, db_operational=db["operational"],
             weights_cfg=weights_cfg, score_calib=score_calib,
+            algorithm=algorithm,
         )
 
         phase_log = []
@@ -135,7 +166,7 @@ def main() -> None:
             return max(0, min(e, gt_end) - max(s, gt_start))
 
         rep = max(session.completed_reps, key=overlap) if session.completed_reps else None
-        offline = offline_predict(z, seq, os_.origin, model, device, db, weights_cfg)
+        offline = offline_predict(z, seq, os_.origin, model, device, db, weights_cfg, algorithm)
 
         report = {
             "actor": seq.actor, "level": seq.level, "true_class": seq.error_type, "rep": seq.rep,

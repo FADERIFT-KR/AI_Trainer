@@ -39,6 +39,7 @@ class ReferenceSequence:
     origin: str
     frame_range: tuple[int, int]  # (start_frame, end_frame), 원본 클립 기준
     scale: float  # leg_length (정규화에 사용한 스케일 값)
+    image_coords_2d: np.ndarray | None = None  # operational camera1 pixels, (T,18,2)
 
 
 def _finalize(hip_centered_seq: np.ndarray) -> tuple[np.ndarray, float]:
@@ -119,4 +120,5 @@ def build_operational_reference(
         origin=origin,
         frame_range=(start_f, end_f),
         scale=scale,
+        image_coords_2d=coords_18[start_f : end_f + 1].astype(np.float32),
     )

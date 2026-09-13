@@ -23,6 +23,7 @@ _L_HEEL, _R_HEEL = _IDX["LHeel"], _IDX["RHeel"]
 _L_TOE, _R_TOE = _IDX["LBigToe"], _IDX["RBigToe"]
 _NECK, _PELVIS = _IDX["Neck"], _IDX["Hip"]
 _LATERAL_AXIS, _VERTICAL_AXIS = 0, 1
+_EXCLUDED_COORD_JOINTS = (_IDX["LElbow"], _IDX["RElbow"], _IDX["LWrist"], _IDX["RWrist"])
 
 FEATURE_NAMES = [
     "joint_coords_3d", "knee_flexion_angle", "hip_flexion_angle", "ankle_angle",
@@ -63,7 +64,10 @@ def extract_all_features(coords: np.ndarray) -> dict[str, np.ndarray]:
     torso_dir = _unit(torso_vec)
     bone_dirs = np.concatenate([thigh_dir, shank_dir, torso_dir], axis=-1)  # (T,9)
 
-    joint_coords_flat = coords.reshape(t, -1)  # (T,54)
+    joint_coords_flat = coords.reshape(t, -1).copy()  # (T,54)
+    # 팔꿈치·손목은 화면 skeleton에는 남기되 좌표 유사도에서는 제외한다.
+    for joint_index in _EXCLUDED_COORD_JOINTS:
+        joint_coords_flat[:, joint_index * 3 : joint_index * 3 + 3] = 0.0
     velocity = np.vstack([np.zeros((1, joint_coords_flat.shape[1])), np.diff(joint_coords_flat, axis=0)])
 
     ankle_vert = (coords[:, _L_ANKLE, _VERTICAL_AXIS] + coords[:, _R_ANKLE, _VERTICAL_AXIS]) / 2.0

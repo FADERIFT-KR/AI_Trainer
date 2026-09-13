@@ -132,6 +132,9 @@ def _project_world_landmarks(
     valid: np.ndarray,
     width: int,
     height: int,
+    *,
+    yaw_deg: float = -24.0,
+    pitch_deg: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray]:
     # MediaPipe world: x right, y down, z away/forward convention varies by
     # view.  Display convention is x right, y up, z toward the viewer.
@@ -145,11 +148,17 @@ def _project_world_landmarks(
         origin = np.nanmedian(coordinates[valid], axis=0)
     coordinates -= origin
 
-    yaw = math.radians(-24.0)
+    yaw = math.radians(yaw_deg)
     cos_yaw, sin_yaw = math.cos(yaw), math.sin(yaw)
     view_x = coordinates[:, 0] * cos_yaw + coordinates[:, 2] * sin_yaw
     view_depth = -coordinates[:, 0] * sin_yaw + coordinates[:, 2] * cos_yaw
     view_y = coordinates[:, 1] - 0.18 * view_depth
+    # pitch: 화면의 가로축을 기준으로 위/아래를 회전한다.
+    pitch = math.radians(pitch_deg)
+    cos_pitch, sin_pitch = math.cos(pitch), math.sin(pitch)
+    pitched_y = view_y * cos_pitch - view_depth * sin_pitch
+    pitched_depth = view_y * sin_pitch + view_depth * cos_pitch
+    view_y, view_depth = pitched_y, pitched_depth
 
     extent_x = float(np.ptp(view_x[valid]))
     extent_y = float(np.ptp(view_y[valid]))
@@ -169,6 +178,9 @@ def render_3d_pose(
     width: int = 640,
     height: int = 480,
     visibility_threshold: float = 0.45,
+    connections: Iterable[tuple[int, int]] | None = None,
+    yaw_deg: float = -24.0,
+    pitch_deg: float = 0.0,
 ) -> np.ndarray:
     """Render world landmarks as a responsive three-quarter 3-D BGR view."""
 
@@ -186,10 +198,13 @@ def render_3d_pose(
     valid = _valid_landmarks(points, visibility_threshold)
     if np.count_nonzero(valid) < 2:
         return np.ascontiguousarray(canvas)
-    screen, depth = _project_world_landmarks(points, valid, width, height)
+    screen, depth = _project_world_landmarks(
+        points, valid, width, height, yaw_deg=yaw_deg, pitch_deg=pitch_deg
+    )
 
     visible_edges: list[tuple[float, int, int]] = []
-    for start, end in POSE_CONNECTIONS:
+    edges = POSE_CONNECTIONS if connections is None else tuple(connections)
+    for start, end in edges:
         if start < len(points) and end < len(points) and valid[start] and valid[end]:
             visible_edges.append(((depth[start] + depth[end]) * 0.5, start, end))
     for _, start, end in sorted(visible_edges, reverse=True):

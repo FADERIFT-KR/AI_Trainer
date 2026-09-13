@@ -1,4 +1,4 @@
-"""메인 윈도우: 운동 선택 화면 <-> 비교 화면 전환."""
+"""메인 윈도우: 실행 즉시 실시간 포즈 비교 화면을 표시한다."""
 from __future__ import annotations
 
 from PyQt5.QtCore import Qt
@@ -24,6 +24,10 @@ class GameWindow(QMainWindow):
 
         self.selection_screen.start_requested.connect(self._start_compare)
         self.compare_screen.back_requested.connect(self._back_to_selection)
+
+        # 현재 지원 종목은 스쿼트 하나이므로 실행 시 선택 화면을 건너뛴다.
+        self.stack.setCurrentWidget(self.compare_screen)
+        self.compare_screen.start("정상", 0)
 
         self.setStyleSheet("QMainWindow { background: #11151d; }")
 
