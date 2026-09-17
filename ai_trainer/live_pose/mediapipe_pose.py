@@ -77,6 +77,7 @@ class MediaPipePoseDetector:
         return timestamp
 
     def process(self, frame_rgb: np.ndarray) -> PoseObservation | None:
+        process_started = time.perf_counter()
         if self._closed:
             raise PoseBackendError("Pose detector is already closed")
         image_array = np.asarray(frame_rgb)
@@ -87,13 +88,26 @@ class MediaPipePoseDetector:
             image_format=self._mp.ImageFormat.SRGB,
             data=image_array,
         )
+        conversion_finished = time.perf_counter()
         result: Any = self._landmarker.detect_for_video(media_image, self._timestamp_ms())
+        inference_finished = time.perf_counter()
         if not result.pose_landmarks or not result.pose_world_landmarks:
+            self.last_timing = {
+                "conversion_ms": (conversion_finished - process_started) * 1000.0,
+                "inference_ms": (inference_finished - conversion_finished) * 1000.0,
+                "postprocess_ms": 0.0,
+            }
             return None
         image_landmarks = landmarks_to_array(result.pose_landmarks[0])
         world_landmarks = landmarks_to_array(result.pose_world_landmarks[0])
         if image_landmarks is None or world_landmarks is None:
             return None
+        postprocess_finished = time.perf_counter()
+        self.last_timing = {
+            "conversion_ms": (conversion_finished - process_started) * 1000.0,
+            "inference_ms": (inference_finished - conversion_finished) * 1000.0,
+            "postprocess_ms": (postprocess_finished - inference_finished) * 1000.0,
+        }
         return PoseObservation(image_landmarks, world_landmarks)
 
     def close(self) -> None:

@@ -39,16 +39,28 @@ def resolve_weights(config: dict, weight_profile: str, class_label: str | None) 
     return {name: ablation.get(name, 0.0) for name in FEATURE_NAMES}
 
 
-def _dtw_dp(cost: np.ndarray) -> tuple[float, int]:
+def _dtw_dp(cost: np.ndarray, window_ratio: float | None = None) -> tuple[float, int]:
     """cost: (n,m) 프레임쌍 비용행렬 -> (누적 최소비용, 정렬 경로 길이 근사(n+m))."""
     n, m = cost.shape
     d = np.full((n + 1, m + 1), np.inf)
+    path_len = np.zeros((n + 1, m + 1), dtype=np.int32)
     d[0, 0] = 0.0
+    radius = None
+    if window_ratio is not None:
+        radius = max(abs(n - m), int(np.ceil(max(n, m) * window_ratio)))
     for i in range(1, n + 1):
         row_cost = cost[i - 1]
-        for j in range(1, m + 1):
-            d[i, j] = row_cost[j - 1] + min(d[i - 1, j], d[i, j - 1], d[i - 1, j - 1])
-    return float(d[n, m]), n + m
+        j_start = 1 if radius is None else max(1, i - radius)
+        j_end = m if radius is None else min(m, i + radius)
+        for j in range(j_start, j_end + 1):
+            predecessors = (d[i - 1, j - 1], d[i - 1, j], d[i, j - 1])
+            best_idx = int(np.argmin(predecessors))
+            if not np.isfinite(predecessors[best_idx]):
+                continue
+            prev_i, prev_j = ((i - 1, j - 1), (i - 1, j), (i, j - 1))[best_idx]
+            d[i, j] = row_cost[j - 1] + predecessors[best_idx]
+            path_len[i, j] = path_len[prev_i, prev_j] + 1
+    return float(d[n, m]), int(path_len[n, m])
 
 
 def phase_slice(features: dict[str, np.ndarray], bounds: dict, phase: str) -> dict[str, np.ndarray]:
@@ -100,8 +112,15 @@ def phase_aware_weighted_dtw(
             per_phase_dist[phase] = None
             continue
         cost, per_feature = weighted_frame_cost_matrix(pa, pb, weights, config)
-        d, path_len = _dtw_dp(cost)
-        d_norm = d / path_len
+        window_ratio = config.get("temporal_alignment", {}).get("warping_window_ratio")
+        d, path_len = _dtw_dp(cost, window_ratio=window_ratio)
+        if path_len == 0:
+            per_phase_dist[phase] = None
+            continue
+        path_length_scale = float(
+            config.get("temporal_alignment", {}).get("path_length_scale", 2.0)
+        )
+        d_norm = d / (path_len * path_length_scale)
         per_phase_dist[phase] = d_norm
         total += phase_weights.get(phase, 1.0) * d_norm
 

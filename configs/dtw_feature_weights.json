@@ -1,6 +1,50 @@
 {
   "description": "Weighted Phase-aware DTW 설정. Validation 성능을 보고 조정하는 것을 전제로 한 초기 설계값(고정 최종값 아님).",
   "default_profile": "E_full_uniform",
+  "temporal_alignment": {
+    "warping_window_ratio": null,
+    "min_partial_frames": 8,
+    "partial_dtw_interval_frames": 6,
+    "path_length_scale": 2.0
+  },
+  "depth_validation": {
+    "normal_reference_percentile": 90.0
+  },
+  "baseline_calibration": {
+    "source": "normal operational reference PREP 2D distributions",
+    "required_consecutive_samples": 8,
+    "hip_average_min_deg": 163.47148059,
+    "knee_average_min_deg": 131.44119491,
+    "hip_side_min_deg": 154.09205630,
+    "knee_side_min_deg": 111.20578404,
+    "hip_frame_delta_p90_deg": 5.63620138,
+    "knee_frame_delta_p90_deg": 7.23585562
+  },
+  "heel_semantic_validation": {
+    "source": "operational normal/heel-error 2D reference heel-relative-motion distribution",
+    "no_evidence_max": 0.08158551080553868,
+    "positive_evidence_min": 0.10469323648288038
+  },
+  "2d_semantic_validation": {
+    "source": "current normal operational reference medoids (CI01/CB15/CI05/CI03)",
+    "knee_excursion_min_deg": 46.38858745051192,
+    "knee_excursion_median_deg": 92.09322547764548,
+    "knee_excursion_max_deg": 116.57510415225504,
+    "hip_excursion_min_deg": 27.433186772026716,
+    "hip_excursion_median_deg": 40.79008105516805,
+    "hip_excursion_max_deg": 49.277032366228156,
+    "knee_3d_minus_2d_excursion_min_deg": -5.533221697338092,
+    "knee_3d_minus_2d_excursion_max_deg": 25.5744654060629,
+    "hip_3d_minus_2d_excursion_min_deg": -12.64705529089153,
+    "hip_3d_minus_2d_excursion_max_deg": 74.43352007611782,
+    "ema_alpha": 0.35,
+    "detector_start_fraction": 0.20,
+    "detector_valid_rep_fraction": 0.35,
+    "detector_recovery_fraction": 0.20,
+    "detector_reversal_fraction": 0.10,
+    "detector_transition_frames": 2,
+    "detector_recovery_frames": 3
+  },
   "default_profile_note": "Offline 평가 결과 uniform(E, acc 0.726)이 class_overrides 적용 custom(D, acc 0.685)보다 높아 당분간 기본값으로 채택. D는 폐기하지 않고 초기 가설 configuration으로 보존, 전체 파이프라인 완성 후 재검토.",
   "features": {
     "joint_coords_3d": {"dim": 54, "unit": "leg_length 단위 (Hip-center+Scale+Orientation 정규화 완료)", "metric": "euclidean", "desc": "18노드 x,y,z"},
@@ -25,7 +69,7 @@
   "uniform_weights": {
     "joint_coords_3d": 1.0, "knee_flexion_angle": 1.0, "hip_flexion_angle": 1.0,
     "ankle_angle": 1.0, "torso_inclination": 1.0, "bone_direction_vectors": 1.0,
-    "joint_velocity": 1.0, "pelvis_trajectory": 1.0, "heel_height": 1.0,
+    "joint_velocity": 0.5, "pelvis_trajectory": 1.0, "heel_height": 1.0,
     "knee_toe_alignment": 1.0, "left_right_asymmetry": 1.0
   },
   "class_overrides": {

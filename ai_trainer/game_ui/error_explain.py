@@ -14,6 +14,7 @@ import cv2
 import numpy as np
 
 from ai_trainer.common_skeleton import COMMON_JOINT_NAMES
+from .cv_text import safe_put_text
 
 _IDX = {name: i for i, name in enumerate(COMMON_JOINT_NAMES)}
 
@@ -22,12 +23,13 @@ _IDX = {name: i for i, name in enumerate(COMMON_JOINT_NAMES)}
 class ErrorExplain:
     joints: tuple[str, ...]  # 말풍선을 붙일 기준 관절(들의 평균 위치)
     text: str
+    body_parts: tuple[str, ...]
 
 
 ERROR_EXPLANATIONS: dict[str, ErrorExplain] = {
-    "발뒤꿈치오류": ErrorExplain(("LHeel", "RHeel"), "발뒤꿈치가 들려요"),
-    "엉덩이하방오류": ErrorExplain(("Hip",), "덜 앉았어요, 더 내려가세요"),
-    "고관절오류": ErrorExplain(("Hip", "Neck"), "상체가 많이 기울었어요"),
+    "발뒤꿈치오류": ErrorExplain(("LHeel", "RHeel"), "발뒤꿈치가 들려요", ("발뒤꿈치",)),
+    "엉덩이하방오류": ErrorExplain(("Hip",), "덜 앉았어요, 더 내려가세요", ("엉덩이",)),
+    "고관절오류": ErrorExplain(("Hip", "Neck"), "상체가 많이 기울었어요", ("고관절", "상체")),
 }
 
 
@@ -79,7 +81,7 @@ def draw_speech_bubble(
     cv2.circle(img, (ax, ay), 5, bg_color, -1, cv2.LINE_AA)
     cv2.circle(img, (ax, ay), 5, (255, 255, 255), 1, cv2.LINE_AA)
 
-    cv2.putText(img, text, (bx + pad_x, by + pad_y + th), font, scale, text_color, thickness, cv2.LINE_AA)
+    safe_put_text(img, text, (bx + pad_x, by + pad_y + th), font, scale, text_color, thickness, source="posture_feedback")
 
 
 def annotate_error(video_bgr: np.ndarray, common2d: np.ndarray, error_class: str) -> None:

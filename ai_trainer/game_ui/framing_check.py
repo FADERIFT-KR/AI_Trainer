@@ -45,6 +45,9 @@ class FramingResult:
     guide_box: tuple[int, int, int, int]  # 화면에 그릴 목표 영역 (x0,y0,x1,y1)
     body_box: tuple[int, int, int, int] | None  # 실제 감지된 전신 bbox (있으면)
     low_confidence_joints: tuple[tuple[str, float], ...] = ()  # 진단용: (관절명, visibility) 임계값 미달 목록
+    bbox_width: float | None = None
+    bbox_height: float | None = None
+    torso_scale: float | None = None
 
 
 def guide_box(width: int, height: int) -> tuple[int, int, int, int]:
@@ -82,26 +85,73 @@ def check_framing(image_landmarks: np.ndarray, width: int, height: int) -> Frami
     body_box = (int(x0b), int(y0b), int(x1b), int(y1b))
     body_h = y1b - y0b
     body_w = max(x1b - x0b, 1.0)
+    shoulder_mid = (image_landmarks[L_SHOULDER, :2] + image_landmarks[R_SHOULDER, :2]) / 2.0
+    hip_mid = (image_landmarks[L_HIP, :2] + image_landmarks[R_HIP, :2]) / 2.0
+    torso_scale = float(np.linalg.norm((shoulder_mid - hip_mid) * np.array([width, height])))
+    metrics = dict(bbox_width=body_w, bbox_height=body_h, torso_scale=torso_scale)
 
     if x0b <= width * EDGE_MARGIN_RATIO or x1b >= width * (1 - EDGE_MARGIN_RATIO):
-        return FramingResult(False, "몸이 화면 가장자리에 걸려있어요 — 카메라에서 조금 물러나주세요", box, body_box, low_conf)
+        return FramingResult(False, "몸이 화면 가장자리에 걸려있어요 — 카메라에서 조금 물러나주세요", box, body_box, low_conf, **metrics)
     if y0b <= height * EDGE_MARGIN_RATIO or y1b >= height * (1 - EDGE_MARGIN_RATIO):
-        return FramingResult(False, "머리나 발이 화면에 잘려요 — 카메라에서 조금 물러나주세요", box, body_box, low_conf)
+        return FramingResult(False, "머리나 발이 화면에 잘려요 — 카메라에서 조금 물러나주세요", box, body_box, low_conf, **metrics)
 
     height_ratio = body_h / height
     if height_ratio < MIN_BODY_HEIGHT_RATIO:
-        return FramingResult(False, "카메라에 조금 더 가까이 서주세요", box, body_box, low_conf)
+        return FramingResult(False, "카메라에 조금 더 가까이 서주세요", box, body_box, low_conf, **metrics)
     if height_ratio > MAX_BODY_HEIGHT_RATIO:
-        return FramingResult(False, "카메라에서 조금 더 물러나주세요", box, body_box, low_conf)
+        return FramingResult(False, "카메라에서 조금 더 물러나주세요", box, body_box, low_conf, **metrics)
 
     center_x = (x0b + x1b) / 2
     if center_x < width * (0.5 - CENTER_TOLERANCE_RATIO):
-        return FramingResult(False, "오른쪽으로 조금 이동해주세요", box, body_box, low_conf)
+        return FramingResult(False, "오른쪽으로 조금 이동해주세요", box, body_box, low_conf, **metrics)
     if center_x > width * (0.5 + CENTER_TOLERANCE_RATIO):
-        return FramingResult(False, "왼쪽으로 조금 이동해주세요", box, body_box, low_conf)
+        return FramingResult(False, "왼쪽으로 조금 이동해주세요", box, body_box, low_conf, **metrics)
 
     hip_sep = abs(xs[L_HIP] - xs[R_HIP])
     if hip_sep / body_w < MIN_FRONTAL_HIP_RATIO:
-        return FramingResult(False, "카메라를 정면으로 봐주세요 (옆모습으로는 분석이 어려워요)", box, body_box, low_conf)
+        return FramingResult(False, "카메라를 정면으로 봐주세요 (옆모습으로는 분석이 어려워요)", box, body_box, low_conf, **metrics)
 
-    return FramingResult(True, "준비 완료 — 스쿼트를 시작하세요", box, body_box, low_conf)
+    return FramingResult(True, "준비 완료 — 스쿼트를 시작하세요", box, body_box, low_conf, **metrics)
+
+
+def check_active_tracking(
+    image_landmarks: np.ndarray,
+    width: int,
+    height: int,
+    standing_torso_scale: float | None,
+) -> FramingResult:
+    """ACTIVE gate: validate trackability, not standing-pose vertical extent."""
+    box = guide_box(width, height)
+    xs = image_landmarks[:, 0] * width
+    ys = image_landmarks[:, 1] * height
+    vis = image_landmarks[:, 3]
+    low_conf = tuple(
+        (REQUIRED_LANDMARK_NAMES[i], float(vis[i]))
+        for i in REQUIRED_LANDMARKS if vis[i] < MIN_VISIBILITY
+    )
+    if low_conf:
+        return FramingResult(False, "운동 추적이 불안정해요 — 머리와 발까지 전신이 보이게 해주세요", box, None, low_conf)
+
+    x0b, x1b = float(xs[list(REQUIRED_LANDMARKS)].min()), float(xs[list(REQUIRED_LANDMARKS)].max())
+    y0b, y1b = float(ys[list(REQUIRED_LANDMARKS)].min()), float(ys[list(REQUIRED_LANDMARKS)].max())
+    body_w, body_h = max(x1b - x0b, 1.0), y1b - y0b
+    body_box = (int(x0b), int(y0b), int(x1b), int(y1b))
+    shoulder_mid = (image_landmarks[L_SHOULDER, :2] + image_landmarks[R_SHOULDER, :2]) / 2.0
+    hip_mid = (image_landmarks[L_HIP, :2] + image_landmarks[R_HIP, :2]) / 2.0
+    torso = float(np.linalg.norm((shoulder_mid - hip_mid) * np.array([width, height])))
+    metrics = dict(bbox_width=body_w, bbox_height=body_h, torso_scale=torso)
+
+    if x0b <= width * EDGE_MARGIN_RATIO or x1b >= width * (1 - EDGE_MARGIN_RATIO):
+        return FramingResult(False, "운동 중 화면 좌우를 벗어났어요", box, body_box, low_conf, **metrics)
+    if y0b <= height * EDGE_MARGIN_RATIO or y1b >= height * (1 - EDGE_MARGIN_RATIO):
+        return FramingResult(False, "운동 중 머리나 발이 화면에서 잘렸어요", box, body_box, low_conf, **metrics)
+    center_x = (x0b + x1b) / 2.0
+    if not width * (0.5 - CENTER_TOLERANCE_RATIO) <= center_x <= width * (0.5 + CENTER_TOLERANCE_RATIO):
+        return FramingResult(False, "운동 중 화면 중앙에서 크게 벗어났어요", box, body_box, low_conf, **metrics)
+    # Reuse the existing 0.50 framing ratio as a relative torso-scale guard.
+    # Squat vertical bbox shrink is intentionally not used here.
+    if standing_torso_scale and torso < standing_torso_scale * MIN_BODY_HEIGHT_RATIO:
+        return FramingResult(False, "운동 중 카메라에서 너무 멀어져 추적이 어려워요", box, body_box, low_conf, **metrics)
+    if standing_torso_scale and torso > standing_torso_scale / MIN_BODY_HEIGHT_RATIO:
+        return FramingResult(False, "운동 중 카메라에 너무 가까워 추적이 어려워요", box, body_box, low_conf, **metrics)
+    return FramingResult(True, "운동 자세 추적 중", box, body_box, low_conf, **metrics)

@@ -34,33 +34,74 @@ class CameraConfig:
 
 
 def _open_camera(cv2: object, config: CameraConfig):
-    backends: list[int] = []
+    backends: list[tuple[str, int]] = []
     if sys.platform == "win32":
-        for name in ("CAP_DSHOW", "CAP_MSMF"):
+        for name in ("CAP_MSMF", "CAP_DSHOW"):
             backend = getattr(cv2, name, None)
-            if backend is not None and backend not in backends:
-                backends.append(backend)
-    backends.append(getattr(cv2, "CAP_ANY", 0))
+            if backend is not None and all(value != backend for _, value in backends):
+                backends.append((name, backend))
+    any_backend = getattr(cv2, "CAP_ANY", 0)
+    if all(value != any_backend for _, value in backends):
+        backends.append(("CAP_ANY", any_backend))
 
     capture = None
-    for backend in backends:
+    selected_report = None
+    for backend_name, backend in backends:
         candidate = cv2.VideoCapture(config.camera_index, backend)
-        if candidate.isOpened():
-            capture = candidate
-            break
-        candidate.release()
+        if not candidate.isOpened():
+            candidate.release()
+            continue
+
+        set_results = {
+            "width": bool(candidate.set(cv2.CAP_PROP_FRAME_WIDTH, config.width)),
+            "height": bool(candidate.set(cv2.CAP_PROP_FRAME_HEIGHT, config.height)),
+            "fps": bool(candidate.set(cv2.CAP_PROP_FPS, config.requested_fps)),
+        }
+        buffer_property = getattr(cv2, "CAP_PROP_BUFFERSIZE", None)
+        set_results["buffersize"] = (
+            bool(candidate.set(buffer_property, 1)) if buffer_property is not None else False
+        )
+
+        warmup_ms = []
+        valid_frame = False
+        for _ in range(3):
+            started = time.perf_counter()
+            success, frame = candidate.read()
+            warmup_ms.append((time.perf_counter() - started) * 1000.0)
+            if success and frame is not None:
+                valid_frame = True
+            else:
+                valid_frame = False
+                break
+        if not valid_frame:
+            candidate.release()
+            continue
+
+        fourcc_value = int(candidate.get(cv2.CAP_PROP_FOURCC))
+        fourcc = "".join(chr((fourcc_value >> (8 * index)) & 0xFF) for index in range(4))
+        capture = candidate
+        selected_report = {
+            "requested_backend": "CAP_MSMF" if sys.platform == "win32" else "CAP_ANY",
+            "selected_candidate": backend_name,
+            "actual_backend": candidate.getBackendName() if hasattr(candidate, "getBackendName") else backend_name,
+            "width": float(candidate.get(cv2.CAP_PROP_FRAME_WIDTH)),
+            "height": float(candidate.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+            "requested_fps": config.requested_fps,
+            "reported_fps": float(candidate.get(cv2.CAP_PROP_FPS)),
+            "buffersize": float(candidate.get(buffer_property)) if buffer_property is not None else None,
+            "fourcc": fourcc,
+            "fourcc_value": fourcc_value,
+            "set_results": set_results,
+            "warmup_capture_ms": warmup_ms,
+        }
+        break
     if capture is None:
         raise RuntimeError(
             f"카메라 {config.camera_index}을(를) 열 수 없습니다. "
             "Windows 설정에서 카메라 권한과 다른 앱의 사용 여부를 확인하세요."
         )
 
-    capture.set(cv2.CAP_PROP_FRAME_WIDTH, config.width)
-    capture.set(cv2.CAP_PROP_FRAME_HEIGHT, config.height)
-    capture.set(cv2.CAP_PROP_FPS, config.requested_fps)
-    buffer_property = getattr(cv2, "CAP_PROP_BUFFERSIZE", None)
-    if buffer_property is not None:
-        capture.set(buffer_property, 1)
+    _open_camera.last_report = selected_report
     return capture
 
 

@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 
 from .skeleton import BONE_COLORS_BGR, BONE_INDEX_PAIRS
+from .game_ui.cv_text import safe_put_text
 
 TransformFn = Callable[[np.ndarray], np.ndarray]
 
@@ -91,8 +92,8 @@ def draw_skeleton_panel(
         cv2.circle(panel, p, 3, (255, 255, 255), -1, cv2.LINE_AA)
 
     cv2.rectangle(panel, (0, 0), (panel_w - 1, panel_h - 1), (70, 70, 70), 1)
-    cv2.putText(panel, title, (8, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1, cv2.LINE_AA)
+    safe_put_text(panel, title, (8, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1, source="skeleton_title")
     if footer:
-        cv2.putText(panel, footer, (8, panel_h - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 1, cv2.LINE_AA)
+        safe_put_text(panel, footer, (8, panel_h - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 1, source="skeleton_footer")
 
     canvas[y0 : y0 + panel_h, x0 : x0 + panel_w] = panel

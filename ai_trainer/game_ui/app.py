@@ -12,7 +12,7 @@ class GameWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("AI Trainer · 스쿼트 자세 비교")
-        self.resize(1400, 820)
+        self.resize(1680, 900)
 
         self.selection_screen = SelectionScreen()
         self.compare_screen = CompareScreen()
