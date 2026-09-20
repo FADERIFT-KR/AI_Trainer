@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import os
 import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from PyQt5.QtCore import QThread, pyqtSignal
+
+from ai_trainer.camera_devices import default_camera_index
 
 from .core import FrameProcessor
 from .mediapipe_pose import MediaPipePoseDetector, PoseBackendError
@@ -19,10 +20,7 @@ def _default_camera_index() -> int:
     필요 없이 `AI_TRAINER_CAMERA_INDEX` 환경변수로 바꿀 수 있다
     (예: `export AI_TRAINER_CAMERA_INDEX=1`). macOS에서 외장 USB 웹캠은
     보통 내장캠(0) 다음 index로 잡힌다."""
-    try:
-        return int(os.environ.get("AI_TRAINER_CAMERA_INDEX", "0"))
-    except ValueError:
-        return 0
+    return default_camera_index()
 
 
 @dataclass(frozen=True)
@@ -35,6 +33,8 @@ class CameraConfig:
     skeleton_width: int = 640
     skeleton_height: int = 480
     confidence: float = 0.4  # 실사용 환경(조명/거리 이상적이지 않음)에서 recall을 우선
+    calibration_path: str | Path | None = None  # ChArUco intrinsic calibration JSON
+    calibration_alpha: float = 0.0  # 0=valid FOV 우선, 1=전체 FOV 유지(검은 테두리 가능)
 
     def __post_init__(self) -> None:
         if self.camera_index < 0:
@@ -43,6 +43,8 @@ class CameraConfig:
             raise ValueError("Camera width, height, and FPS must be positive")
         if not 0.0 <= self.confidence <= 1.0:
             raise ValueError("confidence must be between 0 and 1")
+        if not 0.0 <= self.calibration_alpha <= 1.0:
+            raise ValueError("calibration_alpha must be between 0 and 1")
 
 
 def _open_camera(cv2: object, config: CameraConfig):
@@ -112,11 +114,34 @@ class CameraPoseWorker(QThread):
                 min_presence_confidence=self.config.confidence,
                 min_tracking_confidence=self.config.confidence,
             )
+            from ai_trainer.camera_calibration import (
+                CameraCalibration,
+                CameraCalibrationError,
+                FrameUndistorter,
+            )
+
+            calibration_path = (
+                Path(self.config.calibration_path)
+                if self.config.calibration_path is not None
+                else Path(__file__).resolve().parents[2] / "configs" / "local_camera_calibration.json"
+            )
+            undistorter = None
+            if calibration_path.exists():
+                try:
+                    calibration = CameraCalibration.load(calibration_path)
+                    calibration.require_camera_index(self.config.camera_index)
+                    undistorter = FrameUndistorter(calibration, alpha=self.config.calibration_alpha)
+                    self.status_changed.emit(
+                        f"카메라 왜곡 보정 적용 (RMS {calibration.rms_reprojection_error:.2f}px)"
+                    )
+                except CameraCalibrationError as error:
+                    self.status_changed.emit(f"카메라 보정 미적용: {error}")
             processor = FrameProcessor(
                 detector,
                 mirror=self.config.mirror,
                 skeleton_width=self.config.skeleton_width,
                 skeleton_height=self.config.skeleton_height,
+                frame_preprocessor=undistorter.undistort if undistorter is not None else None,
             )
 
             self.status_changed.emit("카메라를 여는 중…")

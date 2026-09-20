@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import torch
 
+from .camera_views import VIEW_FRONT, VIEW_LEFT, VIEW_RIGHT, VIEWS
 from .common_skeleton import COMMON_JOINT_NAMES
 from .dl_classifier import CLASSES as DL_CLASSES
 from .dl_classifier import DLSquatClassifier
@@ -41,6 +42,8 @@ from .dtw_compare import PHASES, multi_reference_distance, resolve_weights
 from .features import extract_all_features
 from .lifting_dataset import WINDOW_T
 from .normalization import body_axes, hip_center_3d, leg_length_scale
+from .mt_stgcn import SquatErrorDiagnoser
+from .two_stage_squat import NormalTemplateGate, _cost_matrix, normalize_track
 
 _IDX = {name: i for i, name in enumerate(COMMON_JOINT_NAMES)}
 _L_ANKLE, _R_ANKLE = _IDX["LAnkle"], _IDX["RAnkle"]
@@ -61,6 +64,13 @@ class RepResult:
     raw_distance_by_class: dict[str, float]
     score_vs_normal: float | None
     top_contributing_features: list[tuple[str, float]]
+    phase_boundaries: dict[str, list[int]] = field(default_factory=dict)
+    view_mode: str = "front"
+    condition_assessment: dict | None = None
+    decision_stage: str = "legacy"
+    gate_distance: float | None = None
+    gate_threshold: float | None = None
+    body_part_probabilities: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -74,11 +84,12 @@ class OnlineSquatSession:
     vel_eps: float = 0.004
     debounce_n: int = 3
     score_calib: dict | None = None
-    # REP 완료 시 최종 클래스 판정 담당(2026-09-08, actor 5-fold 교차검증: DL AP
-    # 95.8%+-1.5% vs DTW AP 88.8%+-7.4%로 DL이 크게 우세 — 사용자 결정: 순수 DL로
-    # 판정하고 DTW는 근거 텍스트(feature 기여도)용으로만 남긴다). None이면(체크포인트가
-    # 아직 로컬에 없는 경우 등) 기존 DTW 최근접 판정으로 자동 대체된다.
+    # Legacy classifier, used only if the two-stage template is unavailable.
     dl_classifier: DLSquatClassifier | None = None
+    normal_gate: NormalTemplateGate | None = None
+    error_diagnoser: SquatErrorDiagnoser | None = None
+    diagnose_all_reps: bool = False
+    view_mode: str = VIEW_FRONT
 
     # --- 내부 상태 (push_frame이 갱신) ---
     raw2d_buffer: list = field(default_factory=list)  # 원본(정규화 전) common-skeleton 2D
@@ -98,6 +109,10 @@ class OnlineSquatSession:
     completed_reps: list = field(default_factory=list)
 
     def __post_init__(self):
+        if self.view_mode not in VIEWS:
+            raise ValueError(f"Unsupported camera view: {self.view_mode}")
+        if self.normal_gate is not None and self.normal_gate.view != self.view_mode:
+            raise ValueError("The normal gate must be calibrated for this camera view")
         if self.weight_profile is None:
             self.weight_profile = self.weights_cfg.get("default_profile", "E_full_uniform")
 
@@ -143,7 +158,8 @@ class OnlineSquatSession:
         return self._process_3d_frame(hip_centered_3d, emit_idx)
 
     # ------------------------------------------------------------------
-    def push_frame_3d(self, hip_centered_3d_frame: np.ndarray) -> dict | None:
+    def push_frame_3d(self, hip_centered_3d_frame: np.ndarray,
+                      calibration_ready: bool = True) -> dict | None:
         """hip_centered_3d_frame: (18,3) 이미 3D로 복원된, Hip-centered common-skeleton 좌표
         (예: MediaPipe `world_landmarks` 기반 `CommonSkeleton3DBridge` 출력). `push_frame`과
         달리 2D 버퍼링/윈도우/lifting 모델 추론을 전혀 거치지 않고 매 프레임 즉시 처리한다
@@ -160,14 +176,35 @@ class OnlineSquatSession:
         # 인덱스로 통일한다(단, 여기선 지연이 없으므로 원본 스트림 인덱스와 그대로 같다).
         emit_idx = getattr(self, "_frame_3d_count", 0)
         self._frame_3d_count = emit_idx + 1
-        return self._process_3d_frame(hip_centered_3d_frame, emit_idx)
+        return self._process_3d_frame(
+            hip_centered_3d_frame, emit_idx, calibration_ready=calibration_ready,
+        )
 
-    def _process_3d_frame(self, hip_centered_3d: np.ndarray, emit_idx: int) -> dict | None:
+    def _process_3d_frame(self, hip_centered_3d: np.ndarray, emit_idx: int,
+                          calibration_ready: bool = True) -> dict | None:
         """push_frame/push_frame_3d 공통 처리: scale/orientation 캘리브레이션(1회) ->
         body-centered 정렬 -> phase 상태기계 -> partial/joint DTW -> 상태 dict 반환."""
-        leg_len = float(leg_length_scale(hip_centered_3d[None])[0])
+        if self.view_mode == VIEW_FRONT:
+            leg_len = float(leg_length_scale(hip_centered_3d[None])[0])
+        else:
+            near = "L" if self.view_mode == VIEW_LEFT else "R"
+            hip, knee, ankle = (_IDX[f"{near}{joint}"] for joint in ("Hip", "Knee", "Ankle"))
+            leg_len = float(np.linalg.norm(hip_centered_3d[hip] - hip_centered_3d[knee])
+                            + np.linalg.norm(hip_centered_3d[knee] - hip_centered_3d[ankle]))
         if self.R_body is None:
             self._calib_buffer_3d = getattr(self, "_calib_buffer_3d", [])
+            if not calibration_ready:
+                # Do not let a descent frame define the single fixed body
+                # frame for the entire session.  The caller obtains this flag
+                # from visible knee extension and trunk uprightness in 2D.
+                # Consecutive samples are required, so a user must actually
+                # pause in the standing pose before the first REP starts.
+                self._calib_buffer_3d.clear()
+                return {
+                    "status": "waiting_for_calibration",
+                    "frame": emit_idx,
+                    "calibration_samples": 0,
+                }
             self._calib_buffer_3d.append((hip_centered_3d, leg_len))
             if len(self._calib_buffer_3d) >= self.calib_frames:
                 arr = np.stack([c for c, _ in self._calib_buffer_3d])
@@ -191,12 +228,23 @@ class OnlineSquatSession:
                 # "상승"에서 near_baseline 조건이 절대 충족되지 않아 REP가 영원히 끝나지
                 # 않는 문제가 있었다(실제 아이폰 촬영 영상으로 재현·확인).
                 calib_aligned = np.einsum("ij,fpj->fpi", self.R_body.T, scaled0)
-                ankle_vert_calib = (
-                    calib_aligned[:, _L_ANKLE, _VERTICAL_AXIS] + calib_aligned[:, _R_ANKLE, _VERTICAL_AXIS]
-                ) / 2.0
-                self.baseline_height = float(np.median(-ankle_vert_calib))
+                if self.view_mode == VIEW_FRONT:
+                    ankle_vert_calib = (
+                        calib_aligned[:, _L_ANKLE, _VERTICAL_AXIS] + calib_aligned[:, _R_ANKLE, _VERTICAL_AXIS]
+                    ) / 2.0
+                    self.baseline_height = float(np.median(-ankle_vert_calib))
+                else:
+                    near = "L" if self.view_mode == VIEW_LEFT else "R"
+                    hip, ankle = _IDX[f"{near}Hip"], _IDX[f"{near}Ankle"]
+                    self.baseline_height = float(np.median(
+                        calib_aligned[:, hip, _VERTICAL_AXIS] - calib_aligned[:, ankle, _VERTICAL_AXIS]
+                    ))
             else:
-                return {"status": "calibrating", "frame": emit_idx}
+                return {
+                    "status": "calibrating",
+                    "frame": emit_idx,
+                    "calibration_samples": len(self._calib_buffer_3d),
+                }
 
         aligned = np.einsum("ij,pj->pi", self.R_body.T, hip_centered_3d / self.scale3d)
         if self.emit_offset is None:
@@ -205,8 +253,13 @@ class OnlineSquatSession:
         self.aligned_seq.append(aligned)
         t = emit_idx  # 이후 모든 phase/rep 인덱스는 "원본 스트림(emit) 인덱스" 기준으로 통일
 
-        ankle_vert = (aligned[_L_ANKLE, _VERTICAL_AXIS] + aligned[_R_ANKLE, _VERTICAL_AXIS]) / 2.0
-        pelvis_height = -ankle_vert
+        if self.view_mode == VIEW_FRONT:
+            ankle_vert = (aligned[_L_ANKLE, _VERTICAL_AXIS] + aligned[_R_ANKLE, _VERTICAL_AXIS]) / 2.0
+            pelvis_height = -ankle_vert
+        else:
+            near = "L" if self.view_mode == VIEW_LEFT else "R"
+            pelvis_height = float(aligned[_IDX[f"{near}Hip"], _VERTICAL_AXIS]
+                                  - aligned[_IDX[f"{near}Ankle"], _VERTICAL_AXIS])
         self.pelvis_height_hist.append(pelvis_height)
 
         velocity = self._causal_velocity()
@@ -317,50 +370,93 @@ class OnlineSquatSession:
     def _finalize_rep(self, end_t: int) -> None:
         start = self.rep_start_idx if self.rep_start_idx is not None else 0
         rep_coords = np.stack(self.aligned_seq[self._arr_idx(start) : self._arr_idx(end_t) + 1])
-        feat = extract_all_features(rep_coords)
         bounds = {p: [max(0, s - start), max(0, e - start)] for p, (s, e) in self.phase_boundaries_running.items()}
         for p in PHASES:
             bounds.setdefault(p, [0, 0])
 
         per_class = {}
-        for cls, medoids in self.db_operational.items():
-            w = resolve_weights(self.weights_cfg, self.weight_profile, class_label=cls)
-            per_class[cls] = multi_reference_distance(feat, bounds, medoids, w, self.weights_cfg, top_k=2)
-        dtw_pred = min(per_class, key=lambda c: per_class[c]["min_distance"])
+        feat = None
+        dtw_pred = None
+        if self.view_mode == VIEW_FRONT:
+            feat = extract_all_features(rep_coords)
+            for cls, medoids in self.db_operational.items():
+                w = resolve_weights(self.weights_cfg, self.weight_profile, class_label=cls)
+                per_class[cls] = multi_reference_distance(feat, bounds, medoids, w, self.weights_cfg, top_k=2)
+            dtw_pred = min(per_class, key=lambda c: per_class[c]["min_distance"])
 
-        # 최종 클래스 판정: DL 모델이 있으면 그쪽이 담당(actor 5-fold 교차검증 기준
-        # DTW보다 크게 우세, 위 dl_classifier 필드 주석 참고). phase가 너무 짧아
-        # DL이 신뢰 불가 판단(None)하면 기존 DTW 최근접 판정으로 자동 대체된다.
-        dl_probs = self.dl_classifier.predict_proba(feat, bounds) if self.dl_classifier is not None else None
-        if dl_probs is not None:
-            pred = DL_CLASSES[int(dl_probs.argmax())]
-            score = float(dl_probs[DL_CLASSES.index("정상")]) * 100.0
+        gate_distance = gate_threshold = None
+        body_parts = {}
+        decision_stage = "legacy"
+        if self.normal_gate is not None:
+            gate_result = self.normal_gate.assess(rep_coords)
+            gate_distance, gate_threshold = gate_result.distance, gate_result.threshold
+            score = None  # Old percent calibration uses a different DTW distance definition.
+            if gate_result.passed:
+                pred, decision_stage = "정상", "dtw_pass"
+                if self.diagnose_all_reps and self.error_diagnoser is not None:
+                    diagnosis = (self.error_diagnoser.predict(gate_result.aligned)
+                                 if self.view_mode == VIEW_FRONT else
+                                 self.error_diagnoser.predict(gate_result.aligned, self.view_mode))
+                    body_parts = diagnosis["body_part_probabilities"]
+            elif self.error_diagnoser is not None:
+                diagnosis = (self.error_diagnoser.predict(gate_result.aligned)
+                             if self.view_mode == VIEW_FRONT else
+                             self.error_diagnoser.predict(gate_result.aligned, self.view_mode))
+                pred, body_parts = diagnosis["error"], diagnosis["body_part_probabilities"]
+                decision_stage = "mt_stgcn"
+            else:
+                pred, decision_stage = "판정 불확실", "diagnosis_unavailable"
+        elif self.view_mode != VIEW_FRONT:
+            # Never use the unmasked legacy classifier for a side view.
+            pred, score, decision_stage = "판정 불확실", None, "side_model_unavailable"
         else:
-            pred = dtw_pred
-            score = None
-            if self.score_calib is not None:
-                from .scoring import distance_to_score
+            # Compatibility for installations without trained two-stage artifacts.
+            dl_probs = self.dl_classifier.predict_proba(feat, bounds) if self.dl_classifier is not None else None
+            if dl_probs is not None:
+                pred = DL_CLASSES[int(dl_probs.argmax())]
+                score = float(dl_probs[DL_CLASSES.index("정상")]) * 100.0
+            else:
+                pred = dtw_pred
+                score = None
+                if self.score_calib is not None:
+                    from .scoring import distance_to_score
 
-                score = distance_to_score(per_class["정상"]["min_distance"], self.score_calib)
+                    score = distance_to_score(per_class["정상"]["min_distance"], self.score_calib)
 
         # 근거 텍스트(어떤 feature가 이 클래스 판정에 가장 크게 기여했는지)는 DL 사용
         # 여부와 무관하게 항상 DTW의 phase-aware weighted 거리 분해에서 가져온다 — DL은
         # 해석 가능한 근거를 주지 못하므로.
-        top_feat = sorted(per_class[pred]["best_detail"]["per_feature_contrib"].items(), key=lambda kv: -kv[1])[:3]
+        if self.view_mode == VIEW_FRONT:
+            evidence_class = pred if pred in per_class else dtw_pred
+            top_feat = sorted(per_class[evidence_class]["best_detail"]["per_feature_contrib"].items(), key=lambda kv: -kv[1])[:3]
+            raw_distances = {c: per_class[c]["min_distance"] for c in per_class}
+        else:
+            # The legacy evidence uses both legs and can cite an occluded joint.
+            # Side-view explanations therefore refer only to the near-side gate.
+            top_feat = [("visible_side_track", gate_distance)] if gate_distance is not None else []
+            raw_distances = {"정상": gate_distance} if gate_distance is not None else {}
 
         result = RepResult(
             rep_index=len(self.completed_reps),
             frame_range=(start, end_t),
             predicted_class=pred,
-            raw_distance_by_class={c: per_class[c]["min_distance"] for c in per_class},
+            raw_distance_by_class=raw_distances,
             score_vs_normal=score,
             top_contributing_features=top_feat,
+            phase_boundaries=bounds,
+            view_mode=self.view_mode,
+            decision_stage=decision_stage,
+            gate_distance=gate_distance,
+            gate_threshold=gate_threshold,
+            body_part_probabilities=body_parts,
         )
         self.completed_reps.append(result)
 
     def _partial_online_distance(self, t: int) -> dict | None:
         """현재 phase 진입 이후 지금까지의 partial 시퀀스를, 각 클래스 reference의
         동일 phase와 subsequence 방식(끝점 미고정)으로 비교한 distance. 실시간 모니터링용."""
+        if self.view_mode != VIEW_FRONT:
+            return None  # The legacy live distance still compares the hidden side.
         if self.state == "prep" or t - self.current_phase_start < MIN_PARTIAL_FRAMES:
             return None
         phase_name = {"descend": "하강", "bottom": "최저점", "ascend": "상승"}.get(self.state)
@@ -404,6 +500,18 @@ class OnlineSquatSession:
         반환하도록 확장한 버전. 여러 medoid 중 지금까지의 partial 시퀀스와 가장 잘
         맞는(distance가 가장 작은) medoid를 골라 그 정렬을 사용한다.
         """
+        if self.view_mode != VIEW_FRONT:
+            if self.normal_gate is None or self.state == "prep" or t - self.current_phase_start < 2:
+                return None
+            phase_name = {"descend": "하강", "bottom": "최저점", "ascend": "상승"}.get(self.state)
+            if phase_name is None:
+                return None
+            partial = np.stack(self.aligned_seq[self._arr_idx(self.current_phase_start):self._arr_idx(t) + 1])
+            user = normalize_track(partial, self.view_mode)
+            cost = _cost_matrix(user, self.normal_gate.track, self.view_mode)
+            _, reference_index = _subsequence_dtw_end_index(cost)
+            return {"phase": phase_name, "medoid": "visible-side template",
+                    "user_frame": user[-1], "ref_frame": self.normal_gate.track[reference_index]}
         if self.state == "prep" or t - self.current_phase_start < 2:
             return None
         phase_name = {"descend": "하강", "bottom": "최저점", "ascend": "상승"}.get(self.state)

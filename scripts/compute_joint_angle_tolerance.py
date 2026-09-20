@@ -29,8 +29,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np  # noqa: E402
 
-from ai_trainer.actor_split import load_all_air_squat_sequences  # noqa: E402
+from ai_trainer.actor_split import load_air_squat_sequences  # noqa: E402
 from ai_trainer.aihub_zip import AiHubZip  # noqa: E402
+from ai_trainer.dataset_config import DATASET_PATH  # noqa: E402
 from ai_trainer.common_skeleton import COMMON_JOINT_NAMES  # noqa: E402
 from ai_trainer.joint_feedback import TRACKED_JOINTS, _angle_deg  # noqa: E402
 from ai_trainer.lifting_dataset import load_actor_split  # noqa: E402
@@ -39,14 +40,6 @@ from ai_trainer.phase_segmentation import segment_phases  # noqa: E402
 from ai_trainer.reference_pipeline import build_ground_truth_reference  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-TL_ZIP = (
-    "/Users/faderift/Project/Crossfit_Labeling_Data/213.크로스핏_동작_데이터/"
-    "01-1.정식개방데이터/Training/02.라벨링데이터/TL.zip"
-)
-VL_ZIP = (
-    "/Users/faderift/Project/Crossfit_Labeling_Data/213.크로스핏_동작_데이터/"
-    "01-1.정식개방데이터/Validation/02.라벨링데이터/VL.zip"
-)
 SPLIT_PATH = ROOT / "configs" / "actor_split.json"
 OUT_PATH = ROOT / "configs" / "joint_angle_tolerance.json"
 PHASES = ["준비", "하강", "최저점", "상승", "종료"]
@@ -55,11 +48,11 @@ K = 20  # phase 진행률 리샘플링 포인트 수
 
 def main() -> None:
     actor_to_split = load_actor_split(SPLIT_PATH)
-    all_seqs = load_all_air_squat_sequences(TL_ZIP, VL_ZIP)
+    all_seqs = load_air_squat_sequences(DATASET_PATH)
     normal_seqs = [os_ for os_ in all_seqs if os_.seq.error_type == "정상" and actor_to_split.get(os_.seq.actor) == "train"]
     print(f"정상(train) 시퀀스: {len(normal_seqs)}개, actor {len({o.seq.actor for o in normal_seqs})}명")
 
-    zips = {"TL": AiHubZip(TL_ZIP), "VL": AiHubZip(VL_ZIP)}
+    zips = {"DATASET": AiHubZip(DATASET_PATH)}
     idx = {n: i for i, n in enumerate(COMMON_JOINT_NAMES)}
 
     by_phase_joint: dict[str, dict[str, list[np.ndarray]]] = {}

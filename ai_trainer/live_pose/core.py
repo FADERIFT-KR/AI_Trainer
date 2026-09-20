@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 import numpy as np
 
@@ -97,6 +97,7 @@ class FrameProcessor:
         mirror: bool = True,
         skeleton_width: int = 640,
         skeleton_height: int = 480,
+        frame_preprocessor: Callable[[np.ndarray], np.ndarray] | None = None,
     ) -> None:
         if skeleton_width < 64 or skeleton_height < 64:
             raise ValueError("Skeleton canvas must be at least 64 x 64 pixels")
@@ -104,13 +105,17 @@ class FrameProcessor:
         self.mirror = mirror
         self.skeleton_width = skeleton_width
         self.skeleton_height = skeleton_height
+        self.frame_preprocessor = frame_preprocessor
 
     def process(self, frame_bgr: np.ndarray) -> ProcessedFrame:
         frame = np.asarray(frame_bgr)
         if frame.ndim != 3 or frame.shape[2] != 3 or frame.dtype != np.uint8:
             raise ValueError("Camera frame must be a uint8 BGR image with shape [H, W, 3]")
 
-        display_bgr = np.ascontiguousarray(frame[:, ::-1] if self.mirror else frame)
+        # Intrinsic undistortion must happen before a selfie mirror: a calibration
+        # matrix describes the physical camera's raw pixel coordinates.
+        corrected_bgr = self.frame_preprocessor(frame) if self.frame_preprocessor is not None else frame
+        display_bgr = np.ascontiguousarray(corrected_bgr[:, ::-1] if self.mirror else corrected_bgr)
         detector_rgb = np.ascontiguousarray(display_bgr[:, :, ::-1])
         observation = self.detector.process(detector_rgb)
 

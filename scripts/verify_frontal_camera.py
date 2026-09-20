@@ -20,9 +20,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import numpy as np
 import pandas as pd  # noqa: E402
 
-from ai_trainer.actor_split import load_all_air_squat_sequences  # noqa: E402
+from ai_trainer.actor_split import load_air_squat_sequences  # noqa: E402
 from ai_trainer.aihub_zip import JOINT_NAMES, AiHubZip  # noqa: E402
 from ai_trainer.camera_id import PROJECTIONS, evaluate_frame, sample_frame_indices  # noqa: E402
+from ai_trainer.dataset_config import DATASET_PATH  # noqa: E402
 
 _NOSE, _LEYE, _REYE = JOINT_NAMES.index("Nose"), JOINT_NAMES.index("LEye"), JOINT_NAMES.index("REye")
 
@@ -38,14 +39,6 @@ def face_plausibility(coords_2d_frame) -> bool:
     ley_x, rey_x = coords_2d_frame[_LEYE, 0], coords_2d_frame[_REYE, 0]
     return min(ley_x, rey_x) <= nose_x <= max(ley_x, rey_x)
 
-TL_ZIP = (
-    "/Users/faderift/Project/Crossfit_Labeling_Data/213.크로스핏_동작_데이터/"
-    "01-1.정식개방데이터/Training/02.라벨링데이터/TL.zip"
-)
-VL_ZIP = (
-    "/Users/faderift/Project/Crossfit_Labeling_Data/213.크로스핏_동작_데이터/"
-    "01-1.정식개방데이터/Validation/02.라벨링데이터/VL.zip"
-)
 OUT_CSV = Path(__file__).resolve().parent.parent / "output" / "camera_projection_disparity.csv"
 
 FRAMES_PER_SEQ_CAMERA = 10  # 시퀀스x카메라당 표본 프레임 수
@@ -59,7 +52,7 @@ def pick_sample_sequences(seed: int = 7):
     import random
 
     rng = random.Random(seed)
-    all_seqs = load_all_air_squat_sequences(TL_ZIP, VL_ZIP)
+    all_seqs = load_air_squat_sequences(DATASET_PATH)
 
     by_actor_cond: dict[tuple[str, str], list] = {}
     for os_ in all_seqs:
@@ -91,7 +84,7 @@ def main() -> None:
     sample = pick_sample_sequences()
     print(f"표본 시퀀스: {len(sample)}개 (TL+VL 통합 풀에서 stratified sampling)")
 
-    zips = {"TL": AiHubZip(TL_ZIP), "VL": AiHubZip(VL_ZIP)}
+    zips = {"DATASET": AiHubZip(DATASET_PATH)}
     rows = []
     n_done = 0
     for os_ in sample:

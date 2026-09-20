@@ -38,6 +38,7 @@ import numpy as np  # noqa: E402
 
 from ai_trainer.aihub_zip import AiHubZip  # noqa: E402
 from ai_trainer.common_skeleton import COMMON_BONE_COLORS_BGR, COMMON_BONE_INDEX_PAIRS  # noqa: E402
+from ai_trainer.game_ui.reference_track import medoid_rank_from_entry  # noqa: E402
 from ai_trainer.render import draw_skeleton_panel, fit_transform  # noqa: E402
 from ai_trainer.reference_pipeline import build_ground_truth_reference  # noqa: E402
 
@@ -67,13 +68,13 @@ def load_from_reference_db(class_label: str, medoid_rank: int, tier: str) -> tup
     arrays = np.load(DB_DIR / "sequences.npz")
 
     for e in manifest:
-        rank = int(e["medoid_id"].split("_")[1])
+        rank = medoid_rank_from_entry(e)
         if e["class_label"] == class_label and rank == medoid_rank and e["tier"] == tier:
             coords = arrays[e["array_key"]]
             title = f"{class_label} #{medoid_rank} ({tier}) actor={e['actor_id']} level={e['difficulty_level']}"
             return coords, e["phase_boundaries"], title
 
-    available = sorted({(e["class_label"], e["medoid_id"].split("_")[1]) for e in manifest if e["tier"] == tier})
+    available = sorted({(e["class_label"], medoid_rank_from_entry(e)) for e in manifest if e["tier"] == tier})
     raise SystemExit(
         f"[오류] Reference DB에 {class_label} medoid #{medoid_rank} ({tier})가 없습니다.\n"
         f"사용 가능한 조합: {available}"

@@ -12,6 +12,7 @@ import numpy as np
 from ai_trainer.common_skeleton import COMMON_JOINT_NAMES
 
 from .one_euro_filter import OneEuroFilter
+from .spike_guard import DisplayLegLengthStabilizer, Live3DSpikeGuard
 
 # MediaPipe PoseLandmark 인덱스 (Task API, 33점 — live_pose.render.POSE_CONNECTIONS와 동일 토폴로지)
 _MP_INDEX = {
@@ -116,7 +117,7 @@ class CommonSkeleton3DBridge:
     패턴을 그대로 적용한다.
     """
 
-    def __init__(self, min_visibility: float = 0.5):
+    def __init__(self, min_visibility: float = 0.5, stabilize_feet: bool = False):
         self.min_visibility = min_visibility
         self.last_good = np.zeros((len(COMMON_JOINT_NAMES), 3))
         self.has_good = np.zeros(len(COMMON_JOINT_NAMES), dtype=bool)
@@ -133,6 +134,8 @@ class CommonSkeleton3DBridge:
         # 오분류되는 문제(실사용 확인: "카운팅이 이상함", "하방오류가 계속 뜸")의 원인으로
         # 추정된다.
         self._smoother = OneEuroFilter(n_points=len(COMMON_JOINT_NAMES), n_dims=3, min_cutoff=0.8, beta=12.0)
+        self._spike_guard = Live3DSpikeGuard(stabilize_feet=stabilize_feet)
+        self._display_leg_lengths = DisplayLegLengthStabilizer() if stabilize_feet else None
 
     def update(self, world_landmarks: np.ndarray) -> tuple[np.ndarray, np.ndarray, float]:
         """world_landmarks: (33,4) [x,y,z,visibility], 미터 단위 실좌표.
@@ -158,7 +161,8 @@ class CommonSkeleton3DBridge:
                 raw[i] = pos_all[idx]
                 conf[i] = vis_all[idx]
 
-        good_mask = conf >= self.min_visibility
+        good_mask = (conf >= self.min_visibility) & np.isfinite(raw).all(axis=1)
+        raw, guarded = self._spike_guard(raw, good_mask)
         raw = self._smoother(raw, good_mask)
 
         frozen = np.zeros(len(COMMON_JOINT_NAMES), dtype=bool)
@@ -168,14 +172,27 @@ class CommonSkeleton3DBridge:
                 out[i] = raw[i]
                 self.last_good[i] = raw[i]
                 self.has_good[i] = True
+                frozen[i] = guarded[i]
             else:
                 frozen[i] = True
                 if not self.has_good[i]:
                     out[i] = raw[i]
 
+        # Derived pelvis must equal the *filtered* hip midpoint. Smoothing it
+        # independently can otherwise make both hips appear to jitter around
+        # an inconsistent origin even when their own filters are symmetric.
+        pelvis_index = COMMON_JOINT_NAMES.index("Hip")
+        left_hip_index = COMMON_JOINT_NAMES.index("LHip")
+        right_hip_index = COMMON_JOINT_NAMES.index("RHip")
+        if self.has_good[left_hip_index] and self.has_good[right_hip_index]:
+            out[pelvis_index] = (out[left_hip_index] + out[right_hip_index]) / 2.0
+            self.last_good[pelvis_index] = out[pelvis_index]
+
         # MediaPipe world_landmarks는 대략 Hip 중심이지만, online_dtw._process_3d_frame이
         # 기대하는 "정확히 Hip=원점" 계약(lifting 모델 경로와 동일)을 보장하기 위해 우리
         # 정의(LHip/RHip 평균)로 명시적으로 재중심화한다.
-        out = out - out[COMMON_JOINT_NAMES.index("Hip")]
+        out = out - out[pelvis_index]
+        if self._display_leg_lengths is not None:
+            out = self._display_leg_lengths(out, conf, frozen, self.min_visibility)
 
         return out, frozen, float(np.mean(conf))

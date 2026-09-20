@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import numpy as np  # noqa: E402
 import torch  # noqa: E402
 
-from ai_trainer.actor_split import load_all_air_squat_sequences  # noqa: E402
+from ai_trainer.actor_split import load_air_squat_sequences  # noqa: E402
 from ai_trainer.aihub_zip import AiHubZip  # noqa: E402
 from ai_trainer.clustering import best_kmedoids, kmedoids, pairwise_dtw_distance_matrix, sequence_feature_matrix  # noqa: E402
 from ai_trainer.lifting_dataset import load_actor_split  # noqa: E402
@@ -30,16 +30,9 @@ from ai_trainer.lifting_model import TemporalLiftingNet  # noqa: E402
 from ai_trainer.phase_features import extract_phase_features  # noqa: E402
 from ai_trainer.phase_segmentation import segment_phases  # noqa: E402
 from ai_trainer.reference_pipeline import build_ground_truth_reference, build_operational_reference  # noqa: E402
+from ai_trainer.dataset_config import DATASET_PATH  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-TL_ZIP = (
-    "/Users/faderift/Project/Crossfit_Labeling_Data/213.크로스핏_동작_데이터/"
-    "01-1.정식개방데이터/Training/02.라벨링데이터/TL.zip"
-)
-VL_ZIP = (
-    "/Users/faderift/Project/Crossfit_Labeling_Data/213.크로스핏_동작_데이터/"
-    "01-1.정식개방데이터/Validation/02.라벨링데이터/VL.zip"
-)
 SPLIT_PATH = ROOT / "configs" / "actor_split.json"
 OUT_DIR = ROOT / "output" / "reference_db"
 
@@ -81,15 +74,19 @@ def main() -> None:
     model.to(device).eval()
 
     actor_to_split = load_actor_split(SPLIT_PATH)
-    all_seqs = load_all_air_squat_sequences(TL_ZIP, VL_ZIP)
-    zips = {"TL": AiHubZip(TL_ZIP), "VL": AiHubZip(VL_ZIP)}
+    print(f"데이터셋: {DATASET_PATH}")
+    all_seqs = load_air_squat_sequences(DATASET_PATH)
+    train_seqs = [item for item in all_seqs if actor_to_split.get(item.seq.actor) == "train"]
+    excluded = len(all_seqs) - len(train_seqs)
+    print(f"medoid 후보: train actor {len(train_seqs)}개 시퀀스 (val {excluded}개 제외)")
+    zips = {"DATASET": AiHubZip(DATASET_PATH)}
 
     manifest = []
     seq_arrays: dict[str, np.ndarray] = {}
 
     for cls in CLASSES:
         print(f"\n=== [{cls}] ===")
-        candidates = sample_candidates(all_seqs, cls, N_CANDIDATES_PER_CLASS, seed=SEED)
+        candidates = sample_candidates(train_seqs, cls, N_CANDIDATES_PER_CLASS, seed=SEED)
         print(f"후보 {len(candidates)}개 시퀀스에 GT 전처리 적용 중...")
 
         built = []  # (os_, ref, feats, bounds, dtw_feat)

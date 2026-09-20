@@ -27,8 +27,9 @@ import numpy as np  # noqa: E402
 import torch  # noqa: E402
 import torch.nn as nn  # noqa: E402
 
-from ai_trainer.actor_split import load_all_air_squat_sequences  # noqa: E402
+from ai_trainer.actor_split import load_air_squat_sequences  # noqa: E402
 from ai_trainer.aihub_zip import AiHubZip  # noqa: E402
+from ai_trainer.dataset_config import DATASET_PATH  # noqa: E402
 from ai_trainer.dl_classifier import CLASSES, PHASES, SmallSquatCNN, build_fixed_vector  # noqa: E402
 from ai_trainer.features import extract_all_features  # noqa: E402
 from ai_trainer.lifting_dataset import load_actor_split  # noqa: E402
@@ -37,14 +38,6 @@ from ai_trainer.phase_segmentation import segment_phases  # noqa: E402
 from ai_trainer.reference_pipeline import build_ground_truth_reference  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-TL_ZIP = (
-    "/Users/faderift/Project/Crossfit_Labeling_Data/213.크로스핏_동작_데이터/"
-    "01-1.정식개방데이터/Training/02.라벨링데이터/TL.zip"
-)
-VL_ZIP = (
-    "/Users/faderift/Project/Crossfit_Labeling_Data/213.크로스핏_동작_데이터/"
-    "01-1.정식개방데이터/Validation/02.라벨링데이터/VL.zip"
-)
 SPLIT_PATH = ROOT / "configs" / "actor_split.json"
 OUT_DIR = ROOT / "output" / "dl_classifier"
 SEED = 0
@@ -86,10 +79,10 @@ def build_dataset(seqs, zips) -> list[dict]:
 def main() -> None:
     torch.manual_seed(SEED)
     actor_to_split = load_actor_split(SPLIT_PATH)
-    all_seqs = load_all_air_squat_sequences(TL_ZIP, VL_ZIP)
+    all_seqs = load_air_squat_sequences(DATASET_PATH)
     train_seqs = [os_ for os_ in all_seqs if actor_to_split.get(os_.seq.actor) == "train"]
     val_seqs = [os_ for os_ in all_seqs if actor_to_split.get(os_.seq.actor) == "val"]
-    zips = {"TL": AiHubZip(TL_ZIP), "VL": AiHubZip(VL_ZIP)}
+    zips = {"DATASET": AiHubZip(DATASET_PATH)}
 
     print("=== 데이터셋 빌드 ===")
     t0 = time.time()

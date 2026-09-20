@@ -30,13 +30,22 @@ class OriginSequence:
     seq: SequenceKey
 
 
+def load_air_squat_sequences(
+    path: str | Path, origin: str = "DATASET"
+) -> list[OriginSequence]:
+    """Load every air-squat sequence from one zip or extracted directory."""
+    with AiHubZip(path) as dataset:
+        return [
+            OriginSequence(origin, sequence)
+            for sequence in dataset.iter_air_squat_sequences()
+        ]
+
+
 def load_all_air_squat_sequences(tl_zip: str | Path, vl_zip: str | Path) -> list[OriginSequence]:
     """TL.zip과 VL.zip을 합쳐 에어스쿼트 전체 시퀀스 목록을 만든다."""
     out: list[OriginSequence] = []
     for origin, path in (("TL", tl_zip), ("VL", vl_zip)):
-        with AiHubZip(path) as z:
-            for seq in z.iter_air_squat_sequences():
-                out.append(OriginSequence(origin, seq))
+        out.extend(load_air_squat_sequences(path, origin=origin))
     return out
 
 

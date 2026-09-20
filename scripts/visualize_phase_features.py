@@ -21,19 +21,12 @@ plt.rcParams["font.family"] = "AppleGothic"
 plt.rcParams["axes.unicode_minus"] = False
 import numpy as np  # noqa: E402
 
-from ai_trainer.actor_split import load_all_air_squat_sequences  # noqa: E402
+from ai_trainer.actor_split import load_air_squat_sequences  # noqa: E402
 from ai_trainer.aihub_zip import AiHubZip  # noqa: E402
+from ai_trainer.dataset_config import DATASET_PATH  # noqa: E402
 from ai_trainer.phase_features import extract_phase_features  # noqa: E402
 from ai_trainer.reference_pipeline import build_ground_truth_reference  # noqa: E402
 
-TL_ZIP = (
-    "/Users/faderift/Project/Crossfit_Labeling_Data/213.크로스핏_동작_데이터/"
-    "01-1.정식개방데이터/Training/02.라벨링데이터/TL.zip"
-)
-VL_ZIP = (
-    "/Users/faderift/Project/Crossfit_Labeling_Data/213.크로스핏_동작_데이터/"
-    "01-1.정식개방데이터/Validation/02.라벨링데이터/VL.zip"
-)
 OUT_PATH = Path(__file__).resolve().parent.parent / "output" / "phase_feature_check.png"
 
 CLASSES = ["정상", "발뒤꿈치오류", "엉덩이하방오류", "고관절오류"]
@@ -51,7 +44,7 @@ def main() -> None:
     import random
 
     rng = random.Random(3)
-    all_seqs = load_all_air_squat_sequences(TL_ZIP, VL_ZIP)
+    all_seqs = load_air_squat_sequences(DATASET_PATH)
     by_class = {c: [] for c in CLASSES}
     for os_ in all_seqs:
         if os_.seq.error_type in by_class:
@@ -59,7 +52,7 @@ def main() -> None:
     for c in CLASSES:
         rng.shuffle(by_class[c])
 
-    zips = {"TL": AiHubZip(TL_ZIP), "VL": AiHubZip(VL_ZIP)}
+    zips = {"DATASET": AiHubZip(DATASET_PATH)}
 
     fig, axes = plt.subplots(4, 4, figsize=(20, 14), sharex=True)
     feature_names = ["pelvis_height", "pelvis_velocity", "knee_flexion_deg", "hip_flexion_deg"]

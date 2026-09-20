@@ -27,8 +27,8 @@ class GameWindow(QMainWindow):
 
         self.setStyleSheet("QMainWindow { background: #11151d; }")
 
-    def _start_compare(self, class_label: str, medoid_rank: int) -> None:
-        self.compare_screen.start(class_label, medoid_rank)
+    def _start_compare(self, class_label: str, medoid_rank: int, camera_index: int) -> None:
+        self.compare_screen.start(class_label, medoid_rank, camera_index)
         self.stack.setCurrentWidget(self.compare_screen)
 
     def _back_to_selection(self) -> None:

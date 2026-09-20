@@ -29,7 +29,7 @@ import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 import torch  # noqa: E402
 
-from ai_trainer.game_ui.framing_check import check_framing  # noqa: E402
+from ai_trainer.game_ui.framing_check import check_framing, upright_calibration_pose  # noqa: E402
 from ai_trainer.game_ui.pipeline_worker import DB_DIR, DEFAULT_MODEL_PATH, LIFTING_CKPT, OFFLINE_REPORT_PATH, WEIGHTS_CFG_PATH  # noqa: E402
 from ai_trainer.game_ui.pose_bridge import CommonSkeleton3DBridge  # noqa: E402
 from ai_trainer.lifting_model import TemporalLiftingNet  # noqa: E402
@@ -88,7 +88,12 @@ def collect_normal_distances(video_path: Path, confidence: float = 0.4) -> list[
                 ok_since_frame = None
             continue
         common3d, _frozen, _conf = bridge3d.update(obs.world_landmarks)
-        session.push_frame_3d(common3d)
+        calibration = upright_calibration_pose(obs.image_landmarks, "front") \
+            if session.R_body is None else None
+        session.push_frame_3d(
+            common3d,
+            calibration_ready=calibration.ok if calibration is not None else True,
+        )
 
     detector.close()
     cap.release()

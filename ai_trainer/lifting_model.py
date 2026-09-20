@@ -10,10 +10,19 @@ from torch import nn
 
 
 class TemporalLiftingNet(nn.Module):
-    def __init__(self, n_joints: int = 18, hidden: int = 128, dilations: tuple[int, ...] = (1, 2, 1)):
+    def __init__(
+        self,
+        n_joints: int = 18,
+        hidden: int = 128,
+        dilations: tuple[int, ...] = (1, 2, 1),
+        input_dims: int = 2,
+    ):
         super().__init__()
+        if input_dims <= 0:
+            raise ValueError("input_dims must be positive")
         self.n_joints = n_joints
-        in_ch = n_joints * 2
+        self.input_dims = input_dims
+        in_ch = n_joints * input_dims
         out_dim = n_joints * 3
 
         layers = []
@@ -33,8 +42,13 @@ class TemporalLiftingNet(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: (B, T, J, 2)
+        # x: (B, T, J, input_dims)
         b, t, j, c = x.shape
+        if j != self.n_joints or c != self.input_dims:
+            raise ValueError(
+                "Expected input shape (B, T, "
+                f"{self.n_joints}, {self.input_dims}), got {tuple(x.shape)}"
+            )
         x = x.reshape(b, t, j * c).permute(0, 2, 1)  # (B, J*2, T)
         feat = self.temporal(x)  # (B, hidden, T)
         center = feat[:, :, t // 2]  # center frame 특징만 사용

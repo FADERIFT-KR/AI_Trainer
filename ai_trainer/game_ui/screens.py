@@ -1,16 +1,21 @@
 """운동 선택 화면 + 좌(웹캠)/우(정상 레퍼런스) 비교 화면."""
 from __future__ import annotations
 
+import json
 import time
+from pathlib import Path
 
 import numpy as np
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QResizeEvent
 from PyQt5.QtWidgets import (
     QButtonGroup,
+    QDialog,
+    QFileDialog,
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QProgressBar,
     QPushButton,
     QSizePolicy,
@@ -18,15 +23,27 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+from ai_trainer.camera_views import VIEW_FRONT, VIEW_LABEL_KO, VIEW_LEFT, VIEW_RIGHT
+from ai_trainer.camera_devices import discover_camera_devices
 from ai_trainer.common_skeleton import COMMON_BONE_COLORS_BGR, COMMON_BONE_INDEX_PAIRS
 from ai_trainer.joint_feedback import STATUS_BAD, STATUS_GOOD, STATUS_WARNING, JointScore, TRACKED_JOINTS
 from ai_trainer.live_pose.window import ImagePanel
 from ai_trainer.live_pose.worker import CameraConfig
 from ai_trainer.render import draw_skeleton_panel, fit_transform
 from ai_trainer.scoring import PASS_SCORE_THRESHOLD
+from ai_trainer.session_decision import decide_session, format_session_decision
 
 from .pipeline_worker import PipelineStatus, SquatPipelineWorker
+from .post_session_replay import (
+    active_error_joints,
+    annotate_replay_frame,
+    build_replay_views,
+    project_fused_pose,
+    render_fused_skeleton_frame,
+    view_title,
+)
 from .reference_track import DIFFICULTY_LABELS, REFERENCE_FPS, ReferenceTrack, difficulty_medoid_ranks, list_available
+from .session_recording import SessionRecording
 
 REF_PANEL_W, REF_PANEL_H = 480, 480
 
@@ -45,8 +62,11 @@ PHASE_COMPLETE_HOLD_MS = 900
 # 판정 클래스만 보여주던 때(1200ms)보다 늘림.
 REP_POPUP_DURATION_MS = 2000
 
-# 한 세션(게임 한 판)에서 몇 REP를 채우면 결과 화면을 띄울지.
-TARGET_REPS = 5
+# 단안 웹캠을 정면 -> 피험자 좌측 -> 피험자 우측으로 옮겨 각 3회 측정한다.
+# AI Hub 8-camera 데이터에서 자동 식별한 camera1/camera7/camera3 시점과 대응한다.
+REPS_PER_VIEW = 3
+VIEW_SEQUENCE = (VIEW_FRONT, VIEW_LEFT, VIEW_RIGHT)
+TARGET_REPS = REPS_PER_VIEW * len(VIEW_SEQUENCE)
 
 # RepResult.top_contributing_features(dtw_compare.py FEATURE_NAMES 코드명)를 사람이
 #읽을 수 있는 한국어로 바꿔서 "왜 이 판정이 나왔는지" 근거를 보여줄 때 쓴다
@@ -63,6 +83,7 @@ FEATURE_LABEL_KR = {
     "heel_height": "뒤꿈치 들림",
     "knee_toe_alignment": "무릎-발끝 정렬",
     "left_right_asymmetry": "좌우 비대칭",
+    "visible_side_track": "보이는 쪽 다리·어깨 궤적",
 }
 
 # 관절별 오차 막대(JointBarRow) 색상/라벨 — joint_feedback.py가 phase별 CSV 실측
@@ -70,6 +91,121 @@ FEATURE_LABEL_KR = {
 # ("good"/"warning"/"bad")을 화면에 표시할 때 쓴다.
 _JOINT_STATUS_COLOR = {STATUS_GOOD: "#72df8d", STATUS_WARNING: "#f2bd61", STATUS_BAD: "#ff7b7b"}
 _JOINT_STATUS_LABEL = {STATUS_GOOD: "GOOD", STATUS_WARNING: "WARNING", STATUS_BAD: "BAD"}
+
+
+class PostSessionReplayDialog(QDialog):
+    """Play raw recorded views after all required measurements have finished."""
+
+    def __init__(self, replay_views, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("오류 동작 전체 영상")
+        self.setModal(True)
+        self.resize(1480, 760)
+        self._views = list(replay_views)
+        self._view_index = -1
+        self._frame_index = 0
+        self._capture = None
+        self._paused = False
+        self._fused_transform = None
+
+        self.video_panel = ImagePanel("오류 영상 준비 중…")
+        self.fused_panel = ImagePanel("정면·좌측·우측 종합 3D 스켈레톤")
+        self.title_label = QLabel()
+        self.title_label.setAlignment(Qt.AlignCenter)
+        self.title_label.setStyleSheet("font-size: 18px; font-weight: 800; color: #ff8b8b;")
+        self.progress_label = QLabel()
+        self.progress_label.setAlignment(Qt.AlignCenter)
+        self.pause_btn = QPushButton("일시정지")
+        self.pause_btn.clicked.connect(self._toggle_pause)
+        close_btn = QPushButton("닫기")
+        close_btn.clicked.connect(self.accept)
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        buttons.addWidget(self.pause_btn)
+        buttons.addWidget(close_btn)
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.title_label)
+        views = QHBoxLayout()
+        views.setSpacing(12)
+        views.addWidget(self.video_panel, 1)
+        views.addWidget(self.fused_panel, 1)
+        layout.addLayout(views, 1)
+        layout.addWidget(self.progress_label)
+        layout.addLayout(buttons)
+        self.setStyleSheet("QDialog { background: #11151d; color: #e7ecf4; } QPushButton { padding: 8px 16px; }")
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._next_frame)
+        self._open_next_view()
+
+    def _open_next_view(self) -> None:
+        if self._capture is not None:
+            self._capture.release()
+            self._capture = None
+        self._view_index += 1
+        self._frame_index = 0
+        if self._view_index >= len(self._views):
+            self.title_label.setText("오류 동작 전체 재생 완료")
+            self.progress_label.setText("빨간 표시: 최종 판정에서 오류로 확인된 관절/부위")
+            self.pause_btn.setEnabled(False)
+            self._timer.stop()
+            return
+        import cv2
+        plan = self._views[self._view_index]
+        projected = [
+            project_fused_pose(pose)
+            for pose, source in zip(plan.fused_frames, plan.fusion_sources)
+            if pose is not None and source == "phase_fused"
+        ]
+        if not projected:
+            projected = [project_fused_pose(pose) for pose in plan.fused_frames if pose is not None]
+        self._fused_transform = (
+            fit_transform(np.stack(projected), 560, 560, margin=42)
+            if projected else None
+        )
+        self._capture = cv2.VideoCapture(str(plan.video_path))
+        if not self._capture.isOpened():
+            self._open_next_view()
+            return
+        self.title_label.setText(view_title(plan.view))
+        self._timer.setInterval(max(1, round(1000.0 / max(plan.fps, 1.0))))
+        self._timer.start()
+
+    def _next_frame(self) -> None:
+        if self._paused or self._capture is None:
+            return
+        success, frame = self._capture.read()
+        plan = self._views[self._view_index]
+        if not success or self._frame_index >= len(plan.rows):
+            self._open_next_view()
+            return
+        row = plan.rows[self._frame_index]
+        self.video_panel.set_bgr_frame(annotate_replay_frame(frame, row, plan.spans))
+        pose = (plan.fused_frames[self._frame_index]
+                if self._frame_index < len(plan.fused_frames) else None)
+        source = (plan.fusion_sources[self._frame_index]
+                  if self._frame_index < len(plan.fusion_sources) else "unavailable")
+        self.fused_panel.set_bgr_frame(render_fused_skeleton_frame(
+            pose,
+            self._fused_transform,
+            active_error_joints(row, plan.spans),
+            source,
+        ))
+        self.progress_label.setText(
+            f"{VIEW_LABEL_KO[plan.view]} {self._frame_index + 1}/{len(plan.rows)} · "
+            "빨간색은 완료 후 확정된 오류 부위입니다"
+        )
+        self._frame_index += 1
+
+    def _toggle_pause(self) -> None:
+        self._paused = not self._paused
+        self.pause_btn.setText("계속 재생" if self._paused else "일시정지")
+
+    def closeEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        self._timer.stop()
+        if self._capture is not None:
+            self._capture.release()
+            self._capture = None
+        super().closeEvent(event)
 
 
 def joint_detail_text(js: JointScore) -> str:
@@ -171,7 +307,7 @@ BAD_LABEL_MIN_STREAK = 4
 class SelectionScreen(QWidget):
     """1) 운동 종목을 선택하세요 (현재는 스쿼트 하나) + 2) 난이도(레퍼런스 속도) 선택."""
 
-    start_requested = pyqtSignal(str, int)  # class_label, medoid_rank
+    start_requested = pyqtSignal(str, int, int)  # class_label, medoid_rank, camera_index
 
     DEFAULT_DIFFICULTY_IDX = 1  # "보통"
 
@@ -228,6 +364,26 @@ class SelectionScreen(QWidget):
             difficulty_row.addWidget(btn)
         layout.addLayout(difficulty_row)
 
+        camera_title = QLabel("사용할 카메라 장치를 선택하세요")
+        camera_title.setAlignment(Qt.AlignCenter)
+        camera_title.setStyleSheet("font-size: 15px; font-weight: 600; color: #cfd6e2;")
+        layout.addWidget(camera_title)
+
+        self._camera_group = QButtonGroup(self)
+        self._camera_group.setExclusive(True)
+        self._camera_buttons = QWidget()
+        self._camera_row = QHBoxLayout(self._camera_buttons)
+        self._camera_row.setContentsMargins(0, 0, 0, 0)
+        self._camera_row.setSpacing(10)
+        self._selected_camera_index = 0
+        layout.addWidget(self._camera_buttons)
+        self._populate_camera_buttons()
+
+        refresh_camera_btn = QPushButton("카메라 목록 새로고침")
+        refresh_camera_btn.setMinimumHeight(36)
+        refresh_camera_btn.clicked.connect(self._populate_camera_buttons)
+        layout.addWidget(refresh_camera_btn)
+
         squat_btn = QPushButton("🏋️  스쿼트 (에어스쿼트)")
         squat_btn.setMinimumHeight(72)
         squat_btn.setStyleSheet(
@@ -247,9 +403,41 @@ class SelectionScreen(QWidget):
     def _on_difficulty_selected(self, idx: int) -> None:
         self._selected_difficulty_idx = idx
 
+    def _populate_camera_buttons(self) -> None:
+        previous = self._selected_camera_index
+        for button in self._camera_group.buttons():
+            self._camera_group.removeButton(button)
+        while self._camera_row.count():
+            item = self._camera_row.takeAt(0)
+            if item.widget() is not None:
+                item.widget().deleteLater()
+
+        devices = discover_camera_devices()
+        indexes = {device.index for device in devices}
+        self._selected_camera_index = previous if previous in indexes else devices[0].index
+        for device in devices:
+            button = QPushButton(device.button_label)
+            button.setCheckable(True)
+            button.setMinimumHeight(44)
+            button.setChecked(device.index == self._selected_camera_index)
+            button.setToolTip(device.device_name or device.description)
+            button.setStyleSheet(
+                "QPushButton { font-size: 14px; border-radius: 8px; background: #232a38; "
+                "color: #cfd6e2; border: 1px solid #343c4b; padding: 7px; }"
+                "QPushButton:checked { background: #1d4d2b; color: #8bffab; border: 1px solid #4ade80; }"
+                "QPushButton:hover { background: #2c3444; }"
+            )
+            button.clicked.connect(
+                lambda _checked, camera_index=device.index: setattr(
+                    self, "_selected_camera_index", camera_index
+                )
+            )
+            self._camera_group.addButton(button, device.index)
+            self._camera_row.addWidget(button)
+
     def _on_start_clicked(self) -> None:
         medoid_rank = self._difficulty_ranks[self._selected_difficulty_idx]
-        self.start_requested.emit(self._class_label, medoid_rank)
+        self.start_requested.emit(self._class_label, medoid_rank, self._selected_camera_index)
 
 
 class CompareScreen(QWidget):
@@ -288,7 +476,7 @@ class CompareScreen(QWidget):
         views = QHBoxLayout()
         views.setSpacing(12)
         views.addWidget(self._panel("웹캠 · 내 자세", self.camera_panel), 1)
-        views.addWidget(self._panel("내 3D 스켈레톤", self.my_skeleton_panel), 1)
+        views.addWidget(self._panel("내 3D 추정 스켈레톤 · 표시 보정", self.my_skeleton_panel), 1)
         views.addWidget(self._panel("정상 레퍼런스", self.ref_panel), 1)
         views.addWidget(joint_panel, 0)
 
@@ -322,7 +510,7 @@ class CompareScreen(QWidget):
         # "N / TARGET_REPS" 큰 카운터 — 세션 내내 화면 상단에 떠 있는다(요청사항: "카운트를
         # 1/5 이렇게 크게 띄워줘"). 몇 REP까지 실제로 세어졌는지 한눈에 보여서, "5번 했는데
         # 완료화면이 안 뜬다" 같은 문제가 다시 생겨도 어디서 멈췄는지 바로 보이게 한다.
-        self.rep_counter_label = QLabel("0 / 5", self)
+        self.rep_counter_label = QLabel(f"0 / {TARGET_REPS}", self)
         self.rep_counter_label.setAlignment(Qt.AlignCenter)
         self.rep_counter_label.setStyleSheet(
             "background: rgba(10,14,20,190); color: #72df8d; font-size: 42px; "
@@ -363,17 +551,32 @@ class CompareScreen(QWidget):
         self._rep_popup_timer.setInterval(REP_POPUP_DURATION_MS)
         self._rep_popup_timer.timeout.connect(self.rep_popup_label.hide)
 
+        # QWidget이 닫힌 뒤에도 QTimer.singleShot 콜백이 남아 카메라를 다시 여는 일을
+        # 막기 위해 취소 가능한 소유 타이머로 시점 전환을 관리한다.
+        self._view_transition_timer = QTimer(self)
+        self._view_transition_timer.setSingleShot(True)
+        self._view_transition_timer.setInterval(REP_POPUP_DURATION_MS)
+        self._view_transition_timer.timeout.connect(self._advance_view)
+
         # 우측 레퍼런스 패널 전용 타이머 — 카메라/추론 속도와 완전히 무관하게 항상
         # REFERENCE_FPS(원본 AI Hub 캡처 속도, 30fps)로만 흘러간다. 이게 "동작의 기준 속도"다.
         self._ref_playback_timer = QTimer(self)
         self._ref_playback_timer.setInterval(int(1000 / REFERENCE_FPS))
         self._ref_playback_timer.timeout.connect(self._advance_reference_panel)
 
-        # TARGET_REPS(=5)를 채우면 뜨는 "게임 완료" 결과 화면 — 확인을 누르기 전까지는
+        # 세 시점의 TARGET_REPS를 채우면 뜨는 "게임 완료" 결과 화면 — 확인을 누르기 전까지는
         # 안 사라진다(요청사항). 재시도 버튼으로 같은 설정(class/난이도)으로 바로 재시작.
         self._session_reps: list = []  # 이번 세션에서 끝난 RepResult들(online_dtw.RepResult)
+        self._view_index = 0
+        self._current_view = VIEW_SEQUENCE[0]
+        self._transitioning_view = False
         self._last_class_label: str | None = None
         self._last_medoid_rank: int = 0
+        self._last_camera_index: int = 0
+        self._session_recording: SessionRecording | None = None
+        self._session_result_text = ""
+        self._pending_error_replay = False
+        self._error_replay_shown = False
 
         self.game_result_panel = QWidget(self)
         self.game_result_panel.setStyleSheet(
@@ -396,6 +599,12 @@ class CompareScreen(QWidget):
         self.game_result_body.setStyleSheet("font-size: 13px; color: #cfd6e2;")
         gr_layout.addWidget(self.game_result_body, 1)
 
+        self.recording_result_label = QLabel("결과 확인 후 녹화 영상과 분석자료를 저장할 수 있습니다.")
+        self.recording_result_label.setAlignment(Qt.AlignCenter)
+        self.recording_result_label.setWordWrap(True)
+        self.recording_result_label.setStyleSheet("font-size: 12px; color: #9fc6ff;")
+        gr_layout.addWidget(self.recording_result_label)
+
         gr_buttons = QHBoxLayout()
         gr_buttons.setSpacing(12)
         self.retry_btn = QPushButton("🔁 재시도")
@@ -406,6 +615,23 @@ class CompareScreen(QWidget):
             "QPushButton:hover { background: #2c3444; }"
         )
         self.retry_btn.clicked.connect(self._on_retry_clicked)
+        self.save_recording_btn = QPushButton("녹화 영상·분석자료 저장…")
+        self.save_recording_btn.setMinimumHeight(44)
+        self.save_recording_btn.setStyleSheet(
+            "QPushButton { font-size: 14px; font-weight: 700; border-radius: 8px; "
+            "background: #1d4d2b; color: #b9f6c8; }"
+            "QPushButton:hover { background: #266838; }"
+        )
+        self.save_recording_btn.clicked.connect(self._save_recording)
+        self.replay_error_btn = QPushButton("오류 동작 전체 영상 보기")
+        self.replay_error_btn.setMinimumHeight(44)
+        self.replay_error_btn.setEnabled(False)
+        self.replay_error_btn.setStyleSheet(
+            "QPushButton { font-size: 14px; font-weight: 700; border-radius: 8px; "
+            "background: #5a2027; color: #ffc4c8; border: 1px solid #e35d6a; }"
+            "QPushButton:hover:enabled { background: #7a2a34; }"
+        )
+        self.replay_error_btn.clicked.connect(self._show_recorded_error_replay)
         self.confirm_btn = QPushButton("확인")
         self.confirm_btn.setMinimumHeight(44)
         self.confirm_btn.setStyleSheet(
@@ -415,6 +641,8 @@ class CompareScreen(QWidget):
         )
         self.confirm_btn.clicked.connect(self._on_confirm_clicked)
         gr_buttons.addWidget(self.retry_btn)
+        gr_buttons.addWidget(self.replay_error_btn)
+        gr_buttons.addWidget(self.save_recording_btn)
         gr_buttons.addWidget(self.confirm_btn)
         gr_layout.addLayout(gr_buttons)
 
@@ -550,14 +778,27 @@ class CompareScreen(QWidget):
         v.addStretch(1)
         return group
 
-    def start(self, class_label: str, medoid_rank: int) -> None:
+    def start(self, class_label: str, medoid_rank: int, camera_index: int = 0) -> None:
         # 화면에 보여주는 "정답" 레퍼런스와 DTW 점수 계산 둘 다 Ground Truth 계층(AI Hub
         # 8카메라 삼각측량 실측 3D) 사용 — 실시간 3D 소스가 자체 lifting 모델(camera1 단일뷰
         # 근사)에서 MediaPipe 자체 world_landmarks로 바뀌면서(2026-08-28), 비교 대상도 그
         # lifting 모델이 재현된 Operational 계층이 아니라 이 실측 계층으로 함께 맞췄다.
         self._last_class_label, self._last_medoid_rank = class_label, medoid_rank  # 재시도 버튼용
+        self._last_camera_index = camera_index
+        if self.worker is not None and self.worker.isRunning():
+            self.worker.requestInterruption()
+            if not self.worker.wait(5000):
+                self._on_error("이전 카메라 작업이 종료되지 않아 재시작할 수 없습니다.")
+                return
+        self.worker = None
+        if self._session_recording is not None:
+            self._session_recording.close()
+        self._session_recording = SessionRecording()
+        self._session_result_text = ""
+        self._pending_error_replay = False
+        self._error_replay_shown = False
         self.ref_track = ReferenceTrack(class_label=class_label, medoid_rank=medoid_rank, tier="ground_truth")
-        self._ref_tf = fit_transform(self.ref_track.coords[:, :, [0, 1]], REF_PANEL_W, REF_PANEL_H, flip_y=True)
+        self._ref_tf = None
 
         self._countdown_timer.stop()
         self._countdown_started = False
@@ -566,9 +807,16 @@ class CompareScreen(QWidget):
         self._bad_streak_count = 0
         self.countdown_label.hide()
         self._rep_popup_timer.stop()
+        self._view_transition_timer.stop()
         self.rep_popup_label.hide()
         self.game_result_panel.hide()
+        self.replay_error_btn.setEnabled(False)
+        self.game_result_title.setText(f"🏁 {TARGET_REPS}회 완료!")
+        self.recording_result_label.setText("결과 확인 후 녹화 영상과 분석자료를 저장할 수 있습니다.")
         self._session_reps = []
+        self._view_index = 0
+        self._current_view = VIEW_SEQUENCE[0]
+        self._transitioning_view = False
         self.result_label.setText("")
         self.overall_score_label.setText("-")
         for row in self._joint_rows.values():
@@ -581,29 +829,102 @@ class CompareScreen(QWidget):
         self._phase_complete_hold_timer.stop()
         self._set_phase_stage(None)
 
-        self.worker = SquatPipelineWorker(config=CameraConfig())
-        self.worker.status_ready.connect(self._on_status)
-        self.worker.status_changed.connect(self.status_label.setText)
-        self.worker.fatal_error.connect(self._on_error)
-        self.worker.start()
+        self._start_view_worker(self._current_view)
 
         # 레퍼런스는 사용자 상태와 무관하게 화면에 들어오는 즉시 정상 배속으로 계속 재생.
         self._ref_playback_timer.start()
+
+    @staticmethod
+    def _project_view(coords_3d: np.ndarray, view: str) -> np.ndarray:
+        """정규화된 3D 좌표를 선택한 촬영 시점의 화면 평면으로 투영한다."""
+        if view == VIEW_FRONT:
+            return coords_3d[..., [0, 1]]
+        if view in (VIEW_LEFT, VIEW_RIGHT):
+            projected = coords_3d[..., [2, 1]].copy()
+            if view == VIEW_RIGHT:
+                projected[..., 0] *= -1
+            return projected
+        raise ValueError(f"지원하지 않는 시점입니다: {view}")
+
+    def _set_reference_view(self, view: str) -> None:
+        if self.ref_track is None:
+            return
+        projected = self._project_view(self.ref_track.coords, view)
+        self._ref_tf = fit_transform(projected, REF_PANEL_W, REF_PANEL_H, flip_y=True)
+        self.ref_track.reset()
+
+    def _start_view_worker(self, view: str) -> None:
+        """한 물리적 촬영 시점의 3회 측정을 새 세션으로 시작한다."""
+        if self.worker is not None and self.worker.isRunning():
+            self.worker.requestInterruption()
+            if not self.worker.wait(5000):
+                self._on_error("이전 시점의 카메라 작업이 종료되지 않았습니다. 다시 시도해 주세요.")
+                return
+        self.worker = None
+        self._current_view = view
+        self._transitioning_view = False
+        self._countdown_timer.stop()
+        self._countdown_started = False
+        self._framing_ok_since = None
+        self.countdown_label.hide()
+        self._phase_complete_hold_timer.stop()
+        self._set_phase_stage(None)
+        self.overall_score_label.setText("-")
+        for row in self._joint_rows.values():
+            row.clear()
+        self._latest_joint_scores = None
+        self._set_reference_view(view)
+
+        label = VIEW_LABEL_KO[view]
+        self.status_label.setText(f"{label} 측정을 준비하세요 · 전신이 보이면 3초 뒤 시작합니다.")
+        self.rep_label.setText(f"{label} REP 0 / {REPS_PER_VIEW}")
+        self.rep_counter_label.setText(
+            f"{label} 0/{REPS_PER_VIEW} · 전체 {len(self._session_reps)}/{TARGET_REPS}"
+        )
+        # 좌/우 관절이 화면 미러링으로 뒤바뀌지 않게 분석과 표시 모두 센서 원본을 쓴다.
+        self.worker = SquatPipelineWorker(
+            config=CameraConfig(camera_index=self._last_camera_index, mirror=False),
+            view_mode=view,
+            recording_dir=self._session_recording.directory if self._session_recording is not None else None,
+        )
+        self.worker.status_ready.connect(self._on_status)
+        self.worker.status_changed.connect(
+            lambda message, source=view: self._on_worker_message(source, message)
+        )
+        self.worker.fatal_error.connect(
+            lambda message, source=view: self._on_worker_error(source, message)
+        )
+        self.worker.start()
+
+    def _advance_view(self) -> None:
+        if self._view_index + 1 >= len(VIEW_SEQUENCE):
+            return
+        self._view_index += 1
+        self._start_view_worker(VIEW_SEQUENCE[self._view_index])
 
     def stop(self) -> None:
         self._countdown_timer.stop()
         self._ref_playback_timer.stop()
         self._rep_popup_timer.stop()
+        self._view_transition_timer.stop()
         self.countdown_label.hide()
         self.rep_popup_label.hide()
         self.rep_counter_label.hide()
         self._phase_complete_hold_timer.stop()
         self._set_phase_stage(None)
         self.game_result_panel.hide()
-        if self.worker is not None and self.worker.isRunning():
-            self.worker.requestInterruption()
-            self.worker.wait(5000)
+        running_worker = self.worker if self.worker is not None and self.worker.isRunning() else None
+        if running_worker is not None:
+            running_worker.requestInterruption()
+            if not running_worker.wait(5000) and self._session_recording is not None:
+                # 아직 영상 파일을 쓰는 중이면 QThread 종료 후 임시 디렉터리를 정리한다.
+                recording = self._session_recording
+                running_worker.finished.connect(recording.close)
+                self._session_recording = None
         self.worker = None
+        if self._session_recording is not None:
+            self._session_recording.close()
+            self._session_recording = None
 
     # --- 3-2-1 카운트다운: 화각이 안정되면 자동 시작, 세션(캘리브레이션/phase/DTW)은
     # "GO" 순간부터 시작해서 시작 시점의 사용자 판단(휴먼에러)에 기대지 않게 한다. ---
@@ -645,28 +966,29 @@ class CompareScreen(QWidget):
         정상 배속으로 한 프레임씩 진행(끝나면 반복)한다."""
         if self.ref_track is None:
             return
-        ref_xy = self.ref_track.step()
+        ref_xy = self.ref_track.step(self._current_view)
         canvas = np.zeros((REF_PANEL_H, REF_PANEL_W, 3), dtype=np.uint8)
         draw_skeleton_panel(
             canvas, (0, 0), REF_PANEL_W, REF_PANEL_H, self._ref_tf(ref_xy),
-            f"정상 레퍼런스 · 기준 속도 ({self.ref_track.phase_at()})", None,
+            f"{VIEW_LABEL_KO[self._current_view]} 정상 레퍼런스 · 기준 속도 ({self.ref_track.phase_at()})", None,
             COMMON_BONE_INDEX_PAIRS, COMMON_BONE_COLORS_BGR,
         )
         self.ref_panel.set_bgr_frame(canvas)
 
     def _update_my_skeleton_panel(self, status: PipelineStatus) -> None:
-        """웹캠(영상+오버레이) / 정상 레퍼런스 사이에, 내 3D 자세만 크게 스켈레톤으로
-        그려서 보여준다(요청사항). status.aligned_frame은 online_dtw.OnlineSquatSession이
-        DTW에 쓰는 것과 동일한, Hip-center+Scale+Orientation 정규화까지 끝난 좌표라서
-        레퍼런스와 같은 fit_transform(self._ref_tf)을 그대로 재사용해도 스케일이 맞는다
-        — 두 스켈레톤을 나란히 놓고 비교하기도 더 쉬워진다."""
+        """보정된 표시용 3D를 그린다. 판정용 원본 정렬 좌표와는 구분한다.
+
+        정규화 축과 대략적인 다리 스케일은 레퍼런스와 공유하지만, 측면 다리는
+        카메라 평면의 2D 관절 위치로 보이는 형태를 보정한다.
+        """
         if status.aligned_frame is None or self._ref_tf is None:
             return
         canvas = np.zeros((REF_PANEL_H, REF_PANEL_W, 3), dtype=np.uint8)
-        points_px = self._ref_tf(status.aligned_frame[:, [0, 1]])
+        points_px = self._ref_tf(self._project_view(status.aligned_frame, self._current_view))
         draw_skeleton_panel(
             canvas, (0, 0), REF_PANEL_W, REF_PANEL_H, points_px,
-            f"내 자세 ({PHASE_LABEL_KR.get(status.phase, '-')})", None,
+            (f"{VIEW_LABEL_KO[self._current_view]} 내 자세 ({PHASE_LABEL_KR.get(status.phase, '-')})"
+             if status.framing_ok else f"{VIEW_LABEL_KO[self._current_view]} 스켈레톤 추적 중 · 판정 보류"), None,
             COMMON_BONE_INDEX_PAIRS, COMMON_BONE_COLORS_BGR,
         )
         self.my_skeleton_panel.set_bgr_frame(canvas)
@@ -746,21 +1068,27 @@ class CompareScreen(QWidget):
         self.back_requested.emit()
 
     def _on_status(self, status: PipelineStatus) -> None:
+        # 시점 전환 직전 워커에서 큐에 남은 신호가 다음 측정에 섞이지 않게 폐기한다.
+        if self._transitioning_view or status.view_mode != self._current_view:
+            return
+        view_label = VIEW_LABEL_KO[self._current_view]
         self.camera_panel.set_bgr_frame(status.video_bgr)
         self._update_my_skeleton_panel(status)
         self._update_phase_stepper(status)
         self.fps_label.setText(f"{status.fps:4.1f} FPS")
-        self.rep_label.setText(f"REP {status.rep_count}")
+        self.rep_label.setText(f"{view_label} REP {status.rep_count} / {REPS_PER_VIEW}")
 
         if status.pose_found and status.framing_ok:
             conf_flag = f" [인식불안 {status.n_frozen}/18]" if status.n_frozen >= 6 else ""
-            self.status_label.setText(f"● 자세 감지됨 (phase: {PHASE_LABEL_KR.get(status.phase, '-')}){conf_flag}")
+            self.status_label.setText(
+                f"● {view_label} 자세 감지됨 (phase: {PHASE_LABEL_KR.get(status.phase, '-')}){conf_flag}"
+            )
             self.status_label.setStyleSheet("color: #72df8d; font-weight: 600;")
         elif status.pose_found:
-            self.status_label.setText(f"⚠ 위치 조정 필요")
+            self.status_label.setText(f"⚠ {view_label} 위치 조정 필요")
             self.status_label.setStyleSheet("color: #f2bd61; font-weight: 600;")
         else:
-            self.status_label.setText("○ 전신 자세를 찾는 중…")
+            self.status_label.setText(f"○ {view_label} 전신 자세를 찾는 중…")
             self.status_label.setStyleSheet("color: #f2bd61; font-weight: 600;")
 
         self._update_countdown(status)
@@ -769,10 +1097,14 @@ class CompareScreen(QWidget):
         # 우측 레퍼런스 패널은 이제 여기서 갱신하지 않는다 — _advance_reference_panel()이
         # 독립된 REFERENCE_FPS 타이머로 갱신한다(사용자 상태와 무관하게 정상 배속 유지).
 
-        # 위치/화각/정면 여부가 학습 데이터(camera1) 조건에 안 맞으면 DTW 판정 대신
+        # 위치/화각/요청 시점이 데이터셋 조건에 안 맞으면 DTW 판정 대신
         # 위치 안내부터 보여준다 — 잘못된 위치에서 나온 "확인 필요"는 의미가 없다.
         if not status.framing_ok:
             self._set_judge(status.framing_message, "positioning")
+            self._bad_streak_key = None
+            self._bad_streak_count = 0
+        elif status.partial_distance and status.partial_distance.get("two_stage_pending"):
+            self._set_judge("동작 분석 중 · 반복 완료 후 판정", "neutral")
             self._bad_streak_key = None
             self._bad_streak_count = 0
         elif status.partial_distance:
@@ -830,11 +1162,45 @@ class CompareScreen(QWidget):
             score_text = f"{r.score_vs_normal:.0f}%" if r.score_vs_normal is not None else "-"
             # 실시간 judge_label과 동일한 기준: "정상" 대비 유사도가 충분히 높으면
             # 다른 클래스가 근소 우세였어도 최종 판정을 "정상"으로 표시.
-            if r.score_vs_normal is not None and r.score_vs_normal >= PASS_SCORE_THRESHOLD:
+            if r.decision_stage == "legacy" and r.score_vs_normal is not None and r.score_vs_normal >= PASS_SCORE_THRESHOLD:
                 display_class, confidence_note = "정상", ""
             else:
                 display_class = r.predicted_class
-                confidence_note = "" if margin > JUDGE_MARGIN_THRESHOLD else " (근소한 차이 — 참고용)"
+                confidence_note = "" if r.decision_stage != "legacy" or margin > JUDGE_MARGIN_THRESHOLD else " (근소한 차이 — 참고용)"
+            # Keep the established trajectory/ML judgment independent from the
+            # paper's bottom-pose rules.  The combined display_class below is
+            # used only for the short popup and session-level safety outcome.
+            sequence_class = display_class
+
+            assessment = r.condition_assessment or {}
+            paper_violations = assessment.get("paper_posture_violations") or []
+            paper_messages = [str(item.get("message", "논문 자세 기준 위반"))
+                              for item in paper_violations]
+            # The paper's three criteria are evaluated only from the visible
+            # side at the squat bottom.  A failed criterion must be visible in
+            # the REP result even when the sequence gate happened to pass.
+            if paper_messages and display_class == "정상":
+                display_class = "논문 자세 기준 위반"
+            if self._current_view == VIEW_FRONT:
+                paper_result = "미평가 — 정면에서는 전후 깊이·발끝 대비 무릎 위치를 판별할 수 없음"
+            elif paper_messages:
+                paper_result = "위반 — " + " / ".join(paper_messages)
+            else:
+                paper_result = "통과 — 고관절 각도·허벅지 수평·무릎-발끝 정렬"
+
+            if r.gate_distance is not None and r.gate_threshold is not None:
+                score_text = f"DTW {r.gate_distance:.3f} / 기준 {r.gate_threshold:.3f}"
+            if r.body_part_probabilities:
+                likely_parts = [name for name, probability in r.body_part_probabilities.items() if probability >= 0.5]
+                part_text = ", ".join(likely_parts) if likely_parts else "부위 미확정"
+            else:
+                part_text = "-"
+            stage_text = {
+                "dtw_pass": "1차 DTW 통과",
+                "mt_stgcn": "2차 그래프 모델 진단",
+                "diagnosis_unavailable": "2차 진단 모델 없음",
+                "side_model_unavailable": "측면 판정 모델 없음",
+            }.get(r.decision_stage, "기존 판정")
 
             # 판정 근거: DTW가 실제로 비교에 쓴 요소(코드명 -> 한국어) + 관절별 실측
             # 각도/합격범위/초과분. "왜 이 판정이 나왔는지 숫자로 보여달라"는 실사용
@@ -844,16 +1210,17 @@ class CompareScreen(QWidget):
             joint_summary = "  |  ".join(joint_lines) if joint_lines else "-"
 
             self.result_label.setText(
-                f"REP 종료 → 판정: {display_class}{confidence_note}  |  유사도: {score_text}  |  "
-                f"주요 원인: {', '.join(feature_labels)}\n"
-                f"관절별 근거: {joint_summary}"
+                f"REP 종료\n기존 궤적·ML 판정: {sequence_class}{confidence_note} ({stage_text})  |  판정 지표: {score_text}  |  "
+                f"주요 원인: {', '.join(feature_labels)}  |  모델 추정 부위: {part_text}\n"
+                f"관절별 근거: {joint_summary}\n"
+                f"논문 최저점 자세 기준: {paper_result}"
             )
             # 오류 REP에 대한 구체적인 원인 문구 — 벗어난 관절이 있으면 그 관절의 실측
             # 각도/합격범위/초과분을 그대로 쓰고(가장 구체적), 없으면 DTW 주요 feature명으로
             # 대체한다. 팝업뿐 아니라 최종 결과화면(_show_game_result)에도 재사용한다
             # (요청사항: "엉덩이하방오류가 자세가 정확히 어떻게 문제됐는지 완료화면에 띄워줘").
             failing_js = [js for js in (self._latest_joint_scores or []) if not js.within_angle_tolerance]
-            if display_class == "정상":
+            if sequence_class == "정상":
                 fail_reason = ""
             elif failing_js:
                 # 결과화면에 REP마다 다 나열되면 길어지니 최대 2개 관절만 구체적으로 보여준다.
@@ -863,16 +1230,55 @@ class CompareScreen(QWidget):
             else:
                 fail_reason = feature_labels[0] if feature_labels else ""
 
-            self._session_reps.append({
-                "index": r.rep_index, "display_class": display_class, "score_text": score_text,
-                "fail_reason": fail_reason,
-            })
-            self.rep_counter_label.setText(f"{len(self._session_reps)} / {TARGET_REPS}")
+            condition_error = assessment.get("predicted_error")
+            condition_support = assessment.get("error_support") or {}
+            if condition_error:
+                support_pct = 100.0 * float(condition_support.get(condition_error, 0.0))
+                condition_note = f"조건 근거: {condition_error} {support_pct:.0f}%"
+                if sequence_class != "정상" and not fail_reason:
+                    fail_reason = condition_note
+            else:
+                condition_note = "조건 근거: 반복 확인 필요"
+            self.result_label.setText(self.result_label.text() + f"\n기존 판정 보조 조건: {condition_note}")
 
-            if len(self._session_reps) >= TARGET_REPS:
-                # TARGET_REPS(=5)를 채웠다 — 매 REP마다 뜨던 작은 팝업 대신, 확인을 누를
+            view_rep_number = 1 + sum(
+                rep["view_mode"] == self._current_view for rep in self._session_reps
+            )
+            global_index = len(self._session_reps)
+            self._session_reps.append({
+                "index": global_index,
+                "view_rep_index": view_rep_number - 1,
+                "view_mode": self._current_view,
+                "display_class": display_class,
+                "sequence_class": sequence_class,
+                "paper_posture_result": paper_result,
+                "paper_posture_messages": paper_messages,
+                # 최종 융합에는 DL/DTW 시퀀스 분류기의 원 판정을 넣고, 화면용
+                # 정상 유사도 보정 결과(display_class)와 구분한다.
+                "model_class": r.predicted_class,
+                "score_text": score_text,
+                "fail_reason": fail_reason,
+                "condition_assessment": assessment,
+            })
+            total_reps = len(self._session_reps)
+            self.rep_counter_label.setText(
+                f"{view_label} {view_rep_number}/{REPS_PER_VIEW} · 전체 {total_reps}/{TARGET_REPS}"
+            )
+
+            if total_reps >= TARGET_REPS:
+                # 세 시점 각 3회, 총 9회를 채웠다 — 매 REP마다 뜨던 작은 팝업 대신, 확인을 누를
                 # 때까지 안 사라지는 최종 결과 화면으로 넘어간다(요청사항).
                 self._show_game_result()
+            elif view_rep_number >= REPS_PER_VIEW:
+                self._transitioning_view = True
+                if self.worker is not None:
+                    self.worker.requestInterruption()
+                next_view = VIEW_SEQUENCE[self._view_index + 1]
+                self._show_rep_popup(
+                    f"{view_label} 3회 완료\n사용자의 {VIEW_LABEL_KO[next_view]}이 카메라를 향하도록 옮겨 주세요.",
+                    "good",
+                )
+                self._view_transition_timer.start()
             elif display_class == "정상":
                 self._show_rep_popup(f"성공! 👍\n{score_text}", "good")
             else:
@@ -880,37 +1286,151 @@ class CompareScreen(QWidget):
                 self._show_rep_popup(f"REP {r.rep_index + 1} 완료\n{display_class}\n{short_reason}", "bad")
 
     def _show_game_result(self) -> None:
-        """TARGET_REPS(=5)를 채운 뒤 뜨는 결과 화면. 확인 버튼을 누르기 전까지 남아있고
+        """세 시점의 TARGET_REPS를 채운 뒤 뜨는 결과 화면. 확인 버튼을 누르기 전까지 남아있고
         (요청사항), 카메라/레퍼런스 재생은 멈춰서 화면이 계속 바뀌지 않게 한다."""
         if self.worker is not None and self.worker.isRunning():
             self.worker.requestInterruption()
-            self.worker.wait(5000)
-        self.worker = None
+            if not self.worker.wait(5000):
+                self.recording_result_label.setText("영상 파일을 마무리하는 중입니다. 잠시 후 저장해 주세요.")
+                finishing_worker = self.worker
+                finishing_worker.finished.connect(self._recording_worker_finished)
+        if self.worker is not None and not self.worker.isRunning():
+            self.worker = None
         self._ref_playback_timer.stop()
         self._rep_popup_timer.stop()
         self.rep_popup_label.hide()
 
-        n_pass = sum(1 for rep in self._session_reps if rep["display_class"] == "정상")
+        session_decision = decide_session(self._session_reps)
         lines = []
         for rep in self._session_reps:
-            line = f"REP {rep['index'] + 1}: {rep['display_class']} ({rep['score_text']})"
+            view_label = VIEW_LABEL_KO[rep["view_mode"]]
+            sequence_class = rep.get("sequence_class", rep["display_class"])
+            paper_result = rep.get("paper_posture_result")
+            if paper_result is None:
+                # Backward-compatible rendering for a recording produced
+                # before the result fields were split.
+                paper_result = "미평가" if rep["view_mode"] == VIEW_FRONT else "기록 없음"
+            line = (
+                f"{view_label} REP {rep['view_rep_index'] + 1}\n"
+                f"  기존 궤적·ML 판정: {sequence_class} ({rep['score_text']})\n"
+                f"  논문 최저점 자세 기준: {paper_result}"
+            )
             if rep["fail_reason"]:
-                # 오류 REP만 "자세가 정확히 어떻게 문제됐는지" 근거를 같이 보여준다(요청사항).
-                line += f"\n     ↳ {rep['fail_reason']}"
+                line += f"\n  기존 판정 근거: {rep['fail_reason']}"
             lines.append(line)
-        self.game_result_body.setText(f"정상 {n_pass} / {TARGET_REPS}\n\n" + "\n".join(lines))
+        self._session_result_text = format_session_decision(session_decision) + "\n\n" + "\n".join(lines)
+        self.game_result_title.setText(f"🏁 {TARGET_REPS}회 완료!")
+        self.game_result_body.setText(self._session_result_text)
+        self._pending_error_replay = True
+        self.save_recording_btn.setEnabled(
+            self._session_recording is not None and (self.worker is None or not self.worker.isRunning())
+        )
+        self.replay_error_btn.setEnabled(False)
         self._position_game_result_panel()
         self.game_result_panel.show()
         self.game_result_panel.raise_()
+        if self.worker is None or not self.worker.isRunning():
+            # Let the worker's finally block close the current MP4/JSONL before
+            # opening it.  This also makes replay available for the final view.
+            QTimer.singleShot(0, self._recording_worker_finished)
+
+    def _recording_worker_finished(self) -> None:
+        if self.worker is not None and not self.worker.isRunning():
+            self.worker = None
+        if (self.game_result_panel.isVisible() and self._session_recording is not None
+                and (self.worker is None or not self.worker.isRunning())):
+            self.save_recording_btn.setEnabled(True)
+            self.recording_result_label.setText("녹화 영상과 분석자료를 저장할 수 있습니다.")
+            try:
+                has_error_video = bool(build_replay_views(
+                    self._session_recording.directory, self._session_reps,
+                ))
+            except (OSError, ValueError, KeyError, json.JSONDecodeError):
+                has_error_video = False
+            self.replay_error_btn.setEnabled(has_error_video)
+            if self._pending_error_replay and not self._error_replay_shown:
+                self._pending_error_replay = False
+                QTimer.singleShot(0, self._show_recorded_error_replay)
+
+    def _show_recorded_error_replay(self) -> None:
+        """Show all recorded preparation-to-finish views after final judgement."""
+        if self._session_recording is None:
+            QMessageBox.warning(self, "오류 동작 영상", "재생할 세션 녹화가 없습니다.")
+            return
+        if self.worker is not None and self.worker.isRunning():
+            self.recording_result_label.setText("녹화를 마무리한 뒤 오류 영상을 표시합니다.")
+            self._pending_error_replay = True
+            return
+        try:
+            replay_views = build_replay_views(self._session_recording.directory, self._session_reps)
+        except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
+            QMessageBox.warning(self, "오류 동작 영상", f"오류 영상 준비에 실패했습니다: {error}")
+            return
+        if not replay_views:
+            QMessageBox.information(self, "오류 동작 영상", "최종 판정에서 확정된 오류 동작이 없습니다.")
+            return
+        self._error_replay_shown = True
+        self.replay_error_btn.setEnabled(True)
+        PostSessionReplayDialog(replay_views, self).exec_()
+
+    def _save_recording(self) -> None:
+        if self._session_recording is None:
+            QMessageBox.warning(self, "녹화 저장", "저장할 세션 녹화가 없습니다.")
+            return
+        if self.worker is not None and self.worker.isRunning():
+            QMessageBox.warning(self, "녹화 저장", "카메라 녹화가 종료될 때까지 기다려 주세요.")
+            return
+        selected = QFileDialog.getExistingDirectory(
+            self, "스쿼트 녹화 저장 폴더 선택", str(Path.home())
+        )
+        if not selected:
+            return
+        try:
+            saved = self._session_recording.export(selected, {
+                "exercise": "에어스쿼트",
+                "camera_index": self._last_camera_index,
+                "final_result": self._session_result_text,
+                "repetitions": self._session_reps,
+            })
+        except (OSError, RuntimeError, ValueError, TypeError) as error:
+            QMessageBox.warning(self, "녹화 저장 실패", str(error))
+            return
+        missing = [VIEW_LABEL_KO[view] for view in VIEW_SEQUENCE
+                   if not (saved / f"{view}.json").is_file()]
+        suffix = f" · 녹화되지 않은 시점: {', '.join(missing)}" if missing else ""
+        self.recording_result_label.setText(f"저장 완료: {saved}{suffix}")
 
     def _on_retry_clicked(self) -> None:
-        self.game_result_panel.hide()
         if self._last_class_label is not None:
-            self.start(self._last_class_label, self._last_medoid_rank)
+            self.start(self._last_class_label, self._last_medoid_rank, self._last_camera_index)
 
     def _on_confirm_clicked(self) -> None:
         self.game_result_panel.hide()
         self._on_back()
+
+    def _on_worker_message(self, source_view: str, message: str) -> None:
+        if source_view == self._current_view and not self._transitioning_view:
+            self.status_label.setText(message)
+
+    def _on_worker_error(self, source_view: str, message: str) -> None:
+        if source_view != self._current_view or self._transitioning_view:
+            return
+        self._on_error(message)
+        # 9회 완료 전 오류에서도 이미 녹화된 프레임을 버리지 않고 내보낼 수 있게 한다.
+        self._ref_playback_timer.stop()
+        self._countdown_timer.stop()
+        self._session_result_text = f"측정 중 오류: {message}\n완료한 반복: {len(self._session_reps)}/{TARGET_REPS}"
+        self.game_result_title.setText("측정 중 오류")
+        self.game_result_body.setText(self._session_result_text)
+        self.recording_result_label.setText("녹화 파일을 마무리하는 중입니다. 잠시 후 저장해 주세요.")
+        if self.worker is not None and self.worker.isRunning():
+            self.worker.finished.connect(self._recording_worker_finished)
+        self.save_recording_btn.setEnabled(
+            self._session_recording is not None and (self.worker is None or not self.worker.isRunning())
+        )
+        self._position_game_result_panel()
+        self.game_result_panel.show()
+        self.game_result_panel.raise_()
 
     def _on_error(self, message: str) -> None:
         self.status_label.setText(f"오류: {message}")

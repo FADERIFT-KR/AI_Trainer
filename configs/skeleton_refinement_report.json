@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "dataset": "C:\\Users\\user\\Desktop\\TP\\dataset",
+  "sequence_count": 361,
+  "config": {
+    "fps": 30.0,
+    "cutoff_hz": 6.0,
+    "butterworth_order": 4,
+    "hampel_window": 7,
+    "hampel_sigma": 4.5,
+    "minimum_spike_ratio": 0.012,
+    "bone_length_strength": 0.65
+  },
+  "aggregate": {
+    "frames": {
+      "mean": 195.3573407202216,
+      "median": 191.0,
+      "p95": 286.0
+    },
+    "joints": {
+      "mean": 26.0,
+      "median": 26.0,
+      "p95": 26.0
+    },
+    "spike_points": {
+      "mean": 155.7590027700831,
+      "median": 154.0,
+      "p95": 218.0
+    },
+    "spike_fraction": {
+      "mean": 0.031326379533036235,
+      "median": 0.03071182548794489,
+      "p95": 0.03876201923076923
+    },
+    "raw_jerk_rms_normalized": {
+      "mean": 0.1042432987085178,
+      "median": 0.09671465368312113,
+      "p95": 0.1680302535234486
+    },
+    "refined_jerk_rms_normalized": {
+      "mean": 0.009531014275065218,
+      "median": 0.009210202507804046,
+      "p95": 0.011859886670410321
+    },
+    "raw_bone_length_cv": {
+      "mean": 0.06628282877013747,
+      "median": 0.06551535076006706,
+      "p95": 0.0828232663610959
+    },
+    "refined_bone_length_cv": {
+      "mean": 0.023020115986669303,
+      "median": 0.02258016005635561,
+      "p95": 0.028748408911552358
+    },
+    "displacement_rms_normalized": {
+      "mean": 0.031622332187448,
+      "median": 0.02993967267255526,
+      "p95": 0.04756816929785269
+    },
+    "phase_boundary_mae_frames": {
+      "mean": 5.470914127423823,
+      "median": 1.5,
+      "p95": 18.5
+    },
+    "bottom_center_shift_frames": {
+      "mean": 0.5,
+      "median": 0.5,
+      "p95": 1.0
+    },
+    "knee_angle_rms_change_deg": {
+      "mean": 0.8729603055923261,
+      "median": 0.8658816918517153,
+      "p95": 1.002646576743574
+    }
+  },
+  "improvement": {
+    "jerk_rms_reduction": 0.9085695253973536,
+    "bone_length_cv_reduction": 0.6526986488989348
+  },
+  "method": [
+    "rolling median/MAD spike detection and interpolation",
+    "zero-phase 4th-order Butterworth low-pass filtering",
+    "soft robust-median bone-length projection"
+  ]
+}

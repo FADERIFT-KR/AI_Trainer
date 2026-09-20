@@ -34,7 +34,7 @@ import numpy as np  # noqa: E402
 import torch  # noqa: E402
 
 from ai_trainer.game_ui.error_explain import annotate_error  # noqa: E402
-from ai_trainer.game_ui.framing_check import check_framing  # noqa: E402
+from ai_trainer.game_ui.framing_check import check_framing, upright_calibration_pose  # noqa: E402
 from ai_trainer.game_ui.framing_check import guide_box as compute_guide_box  # noqa: E402
 from ai_trainer.game_ui.joint_overlay import draw_joint_feedback  # noqa: E402
 from ai_trainer.game_ui.pipeline_worker import (  # noqa: E402
@@ -47,6 +47,11 @@ from ai_trainer.game_ui.pipeline_worker import (  # noqa: E402
     WEIGHTS_CFG_PATH,
 )
 from ai_trainer.game_ui.pose_bridge import CommonSkeleton3DBridge, CommonSkeletonBridge  # noqa: E402
+from ai_trainer.camera_calibration import (  # noqa: E402
+    CameraCalibration,
+    CameraCalibrationError,
+    FrameUndistorter,
+)
 from ai_trainer.dl_classifier import DLSquatClassifier  # noqa: E402
 from ai_trainer.joint_feedback import compute_joint_scores  # noqa: E402
 from ai_trainer.lifting_model import TemporalLiftingNet  # noqa: E402
@@ -69,6 +74,12 @@ def main() -> None:
     ap.add_argument("--out", type=str, default=None, help="주석 오버레이 영상 저장 경로 (기본: <입력명>_analyzed.mp4)")
     ap.add_argument("--mirror", action="store_true", help="좌우 반전 (셀피 화면처럼 촬영된 경우)")
     ap.add_argument("--confidence", type=float, default=0.4, help="MediaPipe/프레이밍 최소 신뢰도")
+    ap.add_argument(
+        "--calibration",
+        type=Path,
+        default=Path(__file__).resolve().parent.parent / "configs" / "local_camera_calibration.json",
+        help="ChArUco 카메라 보정 JSON (없으면 왜곡 보정 없이 분석)",
+    )
     ap.add_argument("--no-video-out", action="store_true", help="주석 영상을 저장하지 않고 로그만 출력")
     args = ap.parse_args()
 
@@ -87,7 +98,10 @@ def main() -> None:
     db = load_reference_db(DB_DIR)
     score_calib = None
     if OFFLINE_REPORT_PATH.exists():
-        score_calib = json.loads(OFFLINE_REPORT_PATH.read_text(encoding="utf-8"))["score_calibration_ground_truth"]
+        report = json.loads(OFFLINE_REPORT_PATH.read_text(encoding="utf-8"))
+        score_calib = report.get("score_calibration_ground_truth")
+        if score_calib is None:
+            print("[warning] Real-video score calibration is unavailable; percentage score is hidden.")
 
     # pipeline_worker.py와 동일: REP 완료 판정은 DL 모델이 담당(체크포인트 없으면 DTW로 대체).
     dl_classifier = None
@@ -110,6 +124,18 @@ def main() -> None:
         min_presence_confidence=args.confidence,
         min_tracking_confidence=args.confidence,
     )
+
+    undistorter = None
+    if args.calibration.exists():
+        try:
+            calibration = CameraCalibration.load(args.calibration)
+            undistorter = FrameUndistorter(calibration)
+            print(
+                "카메라 렌즈 보정 적용: "
+                f"{args.calibration} (RMS {calibration.rms_reprojection_error:.2f}px)"
+            )
+        except CameraCalibrationError as error:
+            print(f"[경고] 카메라 보정을 적용하지 않습니다: {error}")
 
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
@@ -134,6 +160,12 @@ def main() -> None:
         if not ok:
             break
         frame_idx += 1
+        if undistorter is not None:
+            try:
+                frame_bgr = undistorter.undistort(frame_bgr)
+            except CameraCalibrationError as error:
+                print(f"[경고] 카메라 보정을 중지합니다: {error}")
+                undistorter = None
         display_bgr = np.ascontiguousarray(frame_bgr[:, ::-1] if args.mirror else frame_bgr)
         observation = detector.process(np.ascontiguousarray(display_bgr[:, :, ::-1]))
 
@@ -178,7 +210,12 @@ def main() -> None:
             if framing_ok and session_active:
                 common2d, frozen_mask, mean_conf = bridge.update(observation.image_landmarks, w, h)
                 common3d, _frozen3d, _mean_conf3d = bridge3d.update(observation.world_landmarks)
-                status = session.push_frame_3d(common3d)
+                calibration = upright_calibration_pose(observation.image_landmarks, "front") \
+                    if session.R_body is None else None
+                status = session.push_frame_3d(
+                    common3d,
+                    calibration_ready=calibration.ok if calibration is not None else True,
+                )
                 if status is not None and status.get("status") == "ok":
                     phase = status["phase"]
                     partial = status["partial_distance"]

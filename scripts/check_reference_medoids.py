@@ -19,6 +19,7 @@ import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 
 from ai_trainer.common_skeleton import COMMON_BONE_INDEX_PAIRS  # noqa: E402
+from ai_trainer.game_ui.reference_track import medoid_rank_from_entry  # noqa: E402
 from ai_trainer.render import draw_skeleton_panel, fit_transform  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -35,7 +36,7 @@ def main() -> None:
 
     by_class_rank: dict[tuple[str, int], dict[str, dict]] = {}
     for e in manifest:
-        rank = int(e["medoid_id"].split("_")[1])
+        rank = medoid_rank_from_entry(e)
         key = (e["class_label"], rank)
         by_class_rank.setdefault(key, {})[e["tier"]] = e
 

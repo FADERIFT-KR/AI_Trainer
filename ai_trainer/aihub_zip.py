@@ -24,6 +24,8 @@ from typing import Iterator
 
 import numpy as np
 
+from .skeleton_filter import refine_skeleton_sequence
+
 # 3d_points.csv / camera{N}/local_keypoints/*.csv 공통 26관절 순서
 JOINT_NAMES = [
     "Nose", "LEye", "REye", "LEar", "REar",
@@ -36,6 +38,7 @@ JOINT_NAMES = [
 _SEQ_3D_RE = re.compile(
     r"^스쿼트/에어스쿼트/([^/]+)/([^/]+)/([^/]+)/(\d+)/3d_points\.csv$"
 )
+_AIR_SQUAT_PREFIX = "스쿼트/에어스쿼트"
 
 
 def decode_name(name: str) -> str:
@@ -64,19 +67,53 @@ class SequenceKey:
 
 
 class AiHubZip:
-    """TL.zip 또는 VL.zip 한 개를 감싸는 read-only 접근자."""
+    """Read AI Hub labels from a TL/VL zip or extracted dataset directory."""
 
     def __init__(self, zip_path: str | Path):
         self.zip_path = Path(zip_path)
         if not self.zip_path.exists():
-            raise FileNotFoundError(f"zip 파일을 찾을 수 없습니다: {self.zip_path}")
-        self._zf = zipfile.ZipFile(self.zip_path)
-        self._name_map: dict[str, zipfile.ZipInfo] = {
-            decode_name(zi.filename): zi for zi in self._zf.infolist()
-        }
+            raise FileNotFoundError(f"데이터 경로를 찾을 수 없습니다: {self.zip_path}")
+
+        self._zf: zipfile.ZipFile | None = None
+        self._name_map: dict[str, zipfile.ZipInfo | Path]
+        if self.zip_path.is_dir():
+            air_squat_dir = self._find_air_squat_dir(self.zip_path)
+            files = sorted(
+                (path for path in air_squat_dir.rglob("*") if path.is_file()),
+                key=lambda path: path.relative_to(air_squat_dir).as_posix(),
+            )
+            self._name_map = {
+                f"{_AIR_SQUAT_PREFIX}/{path.relative_to(air_squat_dir).as_posix()}": path
+                for path in files
+            }
+        else:
+            self._zf = zipfile.ZipFile(self.zip_path)
+            self._name_map = {
+                decode_name(zi.filename): zi for zi in self._zf.infolist()
+            }
+
+    @staticmethod
+    def _find_air_squat_dir(source_dir: Path) -> Path:
+        candidates = []
+        if source_dir.name == "에어스쿼트":
+            candidates.append(source_dir)
+        candidates.extend(
+            [
+                source_dir / "에어스쿼트",
+                source_dir / "스쿼트" / "에어스쿼트",
+            ]
+        )
+        for candidate in candidates:
+            if candidate.is_dir():
+                return candidate
+        raise FileNotFoundError(
+            "추출 데이터에서 에어스쿼트 디렉터리를 찾을 수 없습니다: "
+            f"{source_dir}"
+        )
 
     def close(self) -> None:
-        self._zf.close()
+        if self._zf is not None:
+            self._zf.close()
 
     def __enter__(self) -> "AiHubZip":
         return self
@@ -86,10 +123,14 @@ class AiHubZip:
 
     def _read(self, decoded_path: str) -> bytes:
         try:
-            zi = self._name_map[decoded_path]
+            entry = self._name_map[decoded_path]
         except KeyError as e:
-            raise FileNotFoundError(f"zip 내부 경로를 찾을 수 없습니다: {decoded_path}") from e
-        return self._zf.read(zi)
+            raise FileNotFoundError(f"데이터 내부 경로를 찾을 수 없습니다: {decoded_path}") from e
+        if isinstance(entry, Path):
+            return entry.read_bytes()
+        if self._zf is None:  # pragma: no cover - internal invariant guard
+            raise RuntimeError("zip 데이터 소스가 닫혔거나 초기화되지 않았습니다.")
+        return self._zf.read(entry)
 
     def iter_air_squat_sequences(self) -> Iterator[SequenceKey]:
         """에어스쿼트 하위의 모든 (오류유형/난이도/actor/rep) 시퀀스를 나열한다."""
@@ -130,8 +171,13 @@ class AiHubZip:
                     cams.add(int(m.group(1)))
         return sorted(cams)
 
-    def read_3d(self, seq: SequenceKey) -> tuple[list[str], np.ndarray]:
-        """3d_points.csv를 (프레임 파일명 리스트, (T, 26, 3) ndarray)로 반환."""
+    def read_3d(self, seq: SequenceKey, refine: bool = True) -> tuple[list[str], np.ndarray]:
+        """Return ``3d_points.csv`` as ``(frames, (T,26,3))``.
+
+        Dataset consumers receive robustly despiked, zero-phase low-pass
+        filtered and bone-length-stabilized coordinates by default.  Set
+        ``refine=False`` only for auditing the immutable source labels.
+        """
         raw = self._read(f"{seq.base_dir}/3d_points.csv").decode("utf-8-sig")
         rows = list(csv.DictReader(io.StringIO(raw)))
         frames = [r["image_filename"] for r in rows]
@@ -143,6 +189,8 @@ class AiHubZip:
                     float(r[f"{name}_y"]),
                     float(r[f"{name}_z"]),
                 )
+        if refine:
+            coords, _ = refine_skeleton_sequence(coords, JOINT_NAMES)
         return frames, coords
 
     def read_2d(self, seq: SequenceKey, camera: int) -> tuple[list[str], np.ndarray]:

@@ -24,6 +24,7 @@ from pathlib import Path
 import numpy as np
 
 from .common_skeleton import COMMON_JOINT_NAMES
+from .camera_views import VIEW_FRONT, VIEW_LEFT, VIEW_RIGHT
 
 _TOLERANCE_CFG_PATH = Path(__file__).resolve().parent.parent / "configs" / "joint_angle_tolerance.json"
 
@@ -166,3 +167,14 @@ def compute_joint_scores(user_frame: np.ndarray, ref_frame: np.ndarray, phase: s
             )
         )
     return scores
+
+
+def visible_joint_scores(scores: list[JointScore], view: str) -> list[JointScore]:
+    """Keep only the camera-near knee, hip, and ankle in a side view."""
+    if view == VIEW_FRONT:
+        return scores
+    if view == VIEW_LEFT:
+        return [score for score in scores if score.common_joint.startswith("L")]
+    if view == VIEW_RIGHT:
+        return [score for score in scores if score.common_joint.startswith("R")]
+    raise ValueError(f"Unsupported camera view: {view}")

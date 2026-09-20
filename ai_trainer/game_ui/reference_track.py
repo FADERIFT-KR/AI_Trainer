@@ -22,6 +22,23 @@ from pathlib import Path
 
 import numpy as np
 
+from ai_trainer.camera_views import VIEW_FRONT, VIEW_LEFT, VIEW_RIGHT
+
+
+def medoid_rank_from_entry(entry: dict) -> int:
+    """Read the explicit rank, with a safe fallback for legacy manifests.
+
+    Current IDs include a difficulty segment (for example
+    ``정상_초급_0_CB14_rep4``), so the rank must not be inferred from a fixed
+    underscore position. Schema-v2 manifests store ``medoid_rank`` directly.
+    """
+    if "medoid_rank" in entry:
+        return int(entry["medoid_rank"])
+    for segment in entry["medoid_id"].split("_"):
+        if segment.isdecimal():
+            return int(segment)
+    raise ValueError(f"medoid rank is missing from entry: {entry.get('medoid_id')}")
+
 ROOT = Path(__file__).resolve().parent.parent.parent
 DB_DIR = ROOT / "output" / "reference_db"
 
@@ -35,7 +52,7 @@ class ReferenceTrack:
 
         entry = None
         for e in manifest:
-            rank = int(e["medoid_id"].split("_")[1])
+            rank = medoid_rank_from_entry(e)
             if e["class_label"] == class_label and rank == medoid_rank and e["tier"] == tier:
                 entry = e
                 break
@@ -51,13 +68,29 @@ class ReferenceTrack:
         t = max(0, min(t, self.coords.shape[0] - 1))
         return self.coords[t][:, [0, 1]]
 
-    def step(self) -> np.ndarray:
+    def view_plane(self, view: str, t: int) -> np.ndarray:
+        """Project body-aligned 3D reference into the requested camera plane."""
+        t = max(0, min(t, self.coords.shape[0] - 1))
+        if view == VIEW_FRONT:
+            return self.coords[t][:, [0, 1]]
+        if view == VIEW_LEFT:
+            return self.coords[t][:, [2, 1]]
+        if view == VIEW_RIGHT:
+            projected = self.coords[t][:, [2, 1]].copy()
+            projected[:, 0] *= -1
+            return projected
+        raise ValueError(f"지원하지 않는 레퍼런스 시점입니다: {view}")
+
+    def reset(self) -> None:
+        self._cursor = 0
+
+    def step(self, view: str = VIEW_FRONT) -> np.ndarray:
         """정상 배속 재생: 한 프레임 진행하고(끝에 도달하면 처음부터 반복) 좌표를 반환한다.
 
         REFERENCE_FPS 주기의 타이머에서 호출되도록 설계 — 사용자 입력/카메라 fps와
         완전히 무관하게 항상 같은 실제 속도로 흘러간다.
         """
-        xy = self.lateral_vertical(self._cursor)
+        xy = self.view_plane(view, self._cursor)
         self._cursor = (self._cursor + 1) % self.coords.shape[0]
         return xy
 
@@ -76,7 +109,7 @@ class ReferenceTrack:
 def list_available(tier: str = "ground_truth") -> list[tuple[str, int]]:
     manifest = json.loads((DB_DIR / "manifest.json").read_text(encoding="utf-8"))["entries"]
     return sorted(
-        {(e["class_label"], int(e["medoid_id"].split("_")[1])) for e in manifest if e["tier"] == tier}
+        {(e["class_label"], medoid_rank_from_entry(e)) for e in manifest if e["tier"] == tier}
     )
 
 
@@ -115,5 +148,5 @@ def difficulty_medoid_ranks(
         if int(i) in seen:
             continue
         seen.add(int(i))
-        ranks.append(int(entries[i]["medoid_id"].split("_")[1]))
+        ranks.append(medoid_rank_from_entry(entries[i]))
     return ranks

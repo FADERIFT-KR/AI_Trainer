@@ -115,6 +115,26 @@ class FrameProcessorTests(unittest.TestCase):
         draw_3d.assert_called_once()
         np.testing.assert_array_equal(draw_3d.call_args.args[0], world_points)
 
+    def test_frame_preprocessor_runs_before_mirroring_and_inference(self) -> None:
+        detector = FakeDetector(None)
+        input_frame = np.zeros((4, 6, 3), dtype=np.uint8)
+        calls: list[np.ndarray] = []
+
+        def preprocessor(frame: np.ndarray) -> np.ndarray:
+            calls.append(frame.copy())
+            corrected = frame.copy()
+            corrected[:, :, 2] = np.arange(6, dtype=np.uint8)
+            return corrected
+
+        processor = FrameProcessor(detector, mirror=True, frame_preprocessor=preprocessor)
+        with patch("ai_trainer.live_pose.core.render_3d_pose", return_value=np.zeros((64, 64, 3), dtype=np.uint8)):
+            processed = processor.process(input_frame)
+
+        expected_bgr = preprocessor(input_frame)[:, ::-1]
+        np.testing.assert_array_equal(calls[0], input_frame)
+        np.testing.assert_array_equal(processed.video_bgr, expected_bgr)
+        np.testing.assert_array_equal(detector.inputs[0], expected_bgr[:, :, ::-1])
+
     def test_no_detection_clears_previous_skeleton_and_sets_pose_found_false(self) -> None:
         points = landmarks_to_array(fake_landmarks())
         detector = FakeDetector(PoseObservation(points, points.copy()))
