@@ -13,8 +13,8 @@ import torch
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from ai_trainer.camera_calibration import pixels_to_unit_rays, unmirror_pixels  # noqa: E402
-from ai_trainer.ray_lifting import (  # noqa: E402
+from ai_trainer.core.camera_calibration import pixels_to_unit_rays, unmirror_pixels  # noqa: E402
+from ai_trainer.squat.ray_lifting import (  # noqa: E402
     ProjectiveCamera,
     ProjectionCalibrationError,
     RayTemporalLiftingNet,

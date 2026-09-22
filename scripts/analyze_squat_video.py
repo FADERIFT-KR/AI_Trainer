@@ -33,11 +33,11 @@ import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 import torch  # noqa: E402
 
-from ai_trainer.game_ui.error_explain import annotate_error  # noqa: E402
-from ai_trainer.game_ui.framing_check import check_framing, upright_calibration_pose  # noqa: E402
-from ai_trainer.game_ui.framing_check import guide_box as compute_guide_box  # noqa: E402
-from ai_trainer.game_ui.joint_overlay import draw_joint_feedback  # noqa: E402
-from ai_trainer.game_ui.pipeline_worker import (  # noqa: E402
+from ai_trainer.squat.game_ui.error_explain import annotate_error  # noqa: E402
+from ai_trainer.squat.game_ui.framing_check import check_framing, upright_calibration_pose  # noqa: E402
+from ai_trainer.squat.game_ui.framing_check import guide_box as compute_guide_box  # noqa: E402
+from ai_trainer.core.game_ui.joint_overlay import draw_joint_feedback  # noqa: E402
+from ai_trainer.squat.game_ui.pipeline_worker import (  # noqa: E402
     DB_DIR,
     DEFAULT_MODEL_PATH,
     DL_CLASSIFIER_CKPT,
@@ -46,20 +46,20 @@ from ai_trainer.game_ui.pipeline_worker import (  # noqa: E402
     OFFLINE_REPORT_PATH,
     WEIGHTS_CFG_PATH,
 )
-from ai_trainer.game_ui.pose_bridge import CommonSkeleton3DBridge, CommonSkeletonBridge  # noqa: E402
-from ai_trainer.camera_calibration import (  # noqa: E402
+from ai_trainer.core.game_ui.pose_bridge import CommonSkeleton3DBridge, CommonSkeletonBridge  # noqa: E402
+from ai_trainer.core.camera_calibration import (  # noqa: E402
     CameraCalibration,
     CameraCalibrationError,
     FrameUndistorter,
 )
-from ai_trainer.dl_classifier import DLSquatClassifier  # noqa: E402
-from ai_trainer.joint_feedback import compute_joint_scores  # noqa: E402
-from ai_trainer.lifting_model import TemporalLiftingNet  # noqa: E402
-from ai_trainer.live_pose.mediapipe_pose import MediaPipePoseDetector  # noqa: E402
-from ai_trainer.live_pose.render import draw_2d_pose  # noqa: E402
-from ai_trainer.online_dtw import OnlineSquatSession  # noqa: E402
-from ai_trainer.reference_db_io import load_reference_db  # noqa: E402
-from ai_trainer.scoring import PASS_SCORE_THRESHOLD, distance_to_score  # noqa: E402
+from ai_trainer.squat.dl_classifier import DLSquatClassifier  # noqa: E402
+from ai_trainer.squat.joint_feedback import compute_joint_scores  # noqa: E402
+from ai_trainer.squat.lifting_model import TemporalLiftingNet  # noqa: E402
+from ai_trainer.core.live_pose.mediapipe_pose import MediaPipePoseDetector  # noqa: E402
+from ai_trainer.core.live_pose.render import draw_2d_pose  # noqa: E402
+from ai_trainer.squat.online_dtw import OnlineSquatSession  # noqa: E402
+from ai_trainer.squat.reference_db_io import load_reference_db  # noqa: E402
+from ai_trainer.squat.scoring import PASS_SCORE_THRESHOLD, distance_to_score  # noqa: E402
 
 FRAMING_STABLE_SECONDS = 1.0
 FRAMING_DEBOUNCE_FRAMES = 5

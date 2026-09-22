@@ -13,8 +13,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np  # noqa: E402
 
-from ai_trainer.lifting_dataset import build_split_datasets, samples_to_arrays  # noqa: E402
-from ai_trainer.dataset_config import DATASET_PATH  # noqa: E402
+from ai_trainer.squat.lifting_dataset import build_split_datasets, samples_to_arrays  # noqa: E402
+from ai_trainer.core.dataset_config import DATASET_PATH  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 SPLIT_PATH = ROOT / "configs" / "actor_split.json"

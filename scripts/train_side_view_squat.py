@@ -18,13 +18,13 @@ import numpy as np  # noqa: E402
 import torch  # noqa: E402
 from torch import nn  # noqa: E402
 
-from ai_trainer.actor_split import load_air_squat_sequences  # noqa: E402
-from ai_trainer.aihub_zip import AiHubZip  # noqa: E402
-from ai_trainer.camera_views import VIEW_LEFT, VIEW_RIGHT  # noqa: E402
-from ai_trainer.dataset_config import DATASET_PATH  # noqa: E402
-from ai_trainer.mt_stgcn import MultiTaskSTGCN  # noqa: E402
-from ai_trainer.reference_pipeline import build_ground_truth_reference  # noqa: E402
-from ai_trainer.two_stage_squat import (  # noqa: E402
+from ai_trainer.squat.actor_split import load_air_squat_sequences  # noqa: E402
+from ai_trainer.squat.aihub_zip import AiHubZip  # noqa: E402
+from ai_trainer.squat.camera_views import VIEW_LEFT, VIEW_RIGHT  # noqa: E402
+from ai_trainer.core.dataset_config import DATASET_PATH  # noqa: E402
+from ai_trainer.squat.mt_stgcn import MultiTaskSTGCN  # noqa: E402
+from ai_trainer.squat.reference_pipeline import build_ground_truth_reference  # noqa: E402
+from ai_trainer.squat.two_stage_squat import (  # noqa: E402
     ERROR_CLASSES, PART_TARGETS, NormalTemplateGate, choose_threshold, mask_occluded_joints,
 )
 from scripts.train_two_stage_squat import BATCH_SIZE, EPOCHS, SEED, metrics, time_warp  # noqa: E402

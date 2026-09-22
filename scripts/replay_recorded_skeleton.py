@@ -19,12 +19,12 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from ai_trainer.camera_views import VIEWS
-from ai_trainer.common_skeleton import COMMON_BONE_COLORS_BGR, COMMON_BONE_INDEX_PAIRS
-from ai_trainer.game_ui.framing_check import check_framing
-from ai_trainer.game_ui.display_skeleton import ImageGuidedSkeletonDisplay
-from ai_trainer.game_ui.pose_bridge import CommonSkeleton3DBridge, CommonSkeletonBridge
-from ai_trainer.render import draw_skeleton_panel, fit_transform
+from ai_trainer.squat.camera_views import VIEWS
+from ai_trainer.core.common_skeleton import COMMON_BONE_COLORS_BGR, COMMON_BONE_INDEX_PAIRS
+from ai_trainer.squat.game_ui.framing_check import check_framing
+from ai_trainer.squat.game_ui.display_skeleton import ImageGuidedSkeletonDisplay
+from ai_trainer.core.game_ui.pose_bridge import CommonSkeleton3DBridge, CommonSkeletonBridge
+from ai_trainer.core.render import draw_skeleton_panel, fit_transform
 
 
 PANEL_SIZE = 420

@@ -9,7 +9,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from ai_trainer.game_ui.session_recording import SessionRecording, ViewRecorder, json_safe
+from ai_trainer.squat.game_ui.session_recording import SessionRecording, ViewRecorder, json_safe
 from scripts.analyze_recorded_session import analyze
 
 

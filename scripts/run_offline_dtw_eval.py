@@ -21,18 +21,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import numpy as np  # noqa: E402
 import torch  # noqa: E402
 
-from ai_trainer.actor_split import load_air_squat_sequences  # noqa: E402
-from ai_trainer.aihub_zip import AiHubZip  # noqa: E402
-from ai_trainer.dataset_config import DATASET_PATH  # noqa: E402
-from ai_trainer.dtw_compare import PHASES, multi_reference_distance, resolve_weights  # noqa: E402
-from ai_trainer.features import extract_all_features  # noqa: E402
-from ai_trainer.lifting_dataset import load_actor_split  # noqa: E402
-from ai_trainer.lifting_model import TemporalLiftingNet  # noqa: E402
-from ai_trainer.phase_features import extract_phase_features  # noqa: E402
-from ai_trainer.phase_segmentation import segment_phases  # noqa: E402
-from ai_trainer.reference_db_io import load_reference_db  # noqa: E402
-from ai_trainer.reference_pipeline import build_ground_truth_reference, build_operational_reference  # noqa: E402
-from ai_trainer.scoring import distance_to_score, fit_score_calibration  # noqa: E402
+from ai_trainer.squat.actor_split import load_air_squat_sequences  # noqa: E402
+from ai_trainer.squat.aihub_zip import AiHubZip  # noqa: E402
+from ai_trainer.core.dataset_config import DATASET_PATH  # noqa: E402
+from ai_trainer.squat.dtw_compare import PHASES, multi_reference_distance, resolve_weights  # noqa: E402
+from ai_trainer.squat.features import extract_all_features  # noqa: E402
+from ai_trainer.squat.lifting_dataset import load_actor_split  # noqa: E402
+from ai_trainer.squat.lifting_model import TemporalLiftingNet  # noqa: E402
+from ai_trainer.squat.phase_features import extract_phase_features  # noqa: E402
+from ai_trainer.squat.phase_segmentation import segment_phases  # noqa: E402
+from ai_trainer.squat.reference_db_io import load_reference_db  # noqa: E402
+from ai_trainer.squat.reference_pipeline import build_ground_truth_reference, build_operational_reference  # noqa: E402
+from ai_trainer.squat.scoring import distance_to_score, fit_score_calibration  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 SPLIT_PATH = ROOT / "configs" / "actor_split.json"

@@ -16,8 +16,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from PyQt5.QtCore import Qt  # noqa: E402
 from PyQt5.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
-from ai_trainer.game_ui.post_session_replay import build_replay_views  # noqa: E402
-from ai_trainer.game_ui.screens import PostSessionReplayDialog  # noqa: E402
+from ai_trainer.squat.game_ui.post_session_replay import build_replay_views  # noqa: E402
+from ai_trainer.squat.game_ui.screens import PostSessionReplayDialog  # noqa: E402
 
 
 def main() -> int:

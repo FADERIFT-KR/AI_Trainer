@@ -36,11 +36,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 
-from ai_trainer.aihub_zip import AiHubZip  # noqa: E402
-from ai_trainer.common_skeleton import COMMON_BONE_COLORS_BGR, COMMON_BONE_INDEX_PAIRS  # noqa: E402
-from ai_trainer.game_ui.reference_track import medoid_rank_from_entry  # noqa: E402
-from ai_trainer.render import draw_skeleton_panel, fit_transform  # noqa: E402
-from ai_trainer.reference_pipeline import build_ground_truth_reference  # noqa: E402
+from ai_trainer.squat.aihub_zip import AiHubZip  # noqa: E402
+from ai_trainer.core.common_skeleton import COMMON_BONE_COLORS_BGR, COMMON_BONE_INDEX_PAIRS  # noqa: E402
+from ai_trainer.squat.game_ui.reference_track import medoid_rank_from_entry  # noqa: E402
+from ai_trainer.core.render import draw_skeleton_panel, fit_transform  # noqa: E402
+from ai_trainer.squat.reference_pipeline import build_ground_truth_reference  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 DB_DIR = ROOT / "output" / "reference_db"
@@ -91,8 +91,8 @@ def load_from_zip(args: argparse.Namespace) -> tuple[np.ndarray, dict, str]:
         if ref is None:
             raise SystemExit(f"[오류] {seq} 시퀀스를 처리할 수 없습니다 (구간이 너무 짧음 등).")
 
-    from ai_trainer.phase_features import extract_phase_features
-    from ai_trainer.phase_segmentation import segment_phases
+    from ai_trainer.squat.phase_features import extract_phase_features
+    from ai_trainer.squat.phase_segmentation import segment_phases
 
     bounds = segment_phases(extract_phase_features(ref.coords)).as_dict()
     title = f"{seq.error_type} {seq.actor}/rep{seq.rep} ({seq.level})"

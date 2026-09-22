@@ -23,10 +23,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 
-from ai_trainer.game_ui.framing_check import check_framing, guide_box as compute_guide_box  # noqa: E402
-from ai_trainer.live_pose.mediapipe_pose import MediaPipePoseDetector  # noqa: E402
-from ai_trainer.live_pose.render import draw_2d_pose  # noqa: E402
-from ai_trainer.live_pose.worker import CameraConfig, _open_camera  # noqa: E402
+from ai_trainer.squat.game_ui.framing_check import check_framing, guide_box as compute_guide_box  # noqa: E402
+from ai_trainer.core.live_pose.mediapipe_pose import MediaPipePoseDetector  # noqa: E402
+from ai_trainer.core.live_pose.render import draw_2d_pose  # noqa: E402
+from ai_trainer.core.live_pose.worker import CameraConfig, _open_camera  # noqa: E402
 
 DEFAULT_MODEL_PATH = Path(__file__).resolve().parent.parent / "models" / "pose_landmarker_full.task"
 WINDOW_NAME = "framing 진단 (q 또는 ESC로 종료)"

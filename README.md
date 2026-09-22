@@ -2,12 +2,27 @@
 
 소재부품융합공학과 졸업프로젝트 5조 — 웹캠으로 에어스쿼트 자세를 실시간 분석하고, AI Hub 정상 동작 레퍼런스와 비교해 자세 교정 피드백을 제공하는 프로젝트입니다.
 
-이 브랜치(`feature/game-ui`)는 두 작업을 통합합니다.
-
-- **웹캠 2D/3D 스켈레톤 추출** (`ai_trainer/live_pose/`) — MediaPipe Pose(Task API) + PyQt5
-- **AI Hub CSV/JSON 기반 정상 자세 레퍼런스 + Weighted DTW 비교/채점 엔진** (`ai_trainer/` 나머지 모듈, `feature/dtw-pipeline` 유래)
-
 목표 UI: 운동 종목 선택 → 좌(웹캠+내 스켈레톤) / 우(정상 레퍼런스 스켈레톤) 2분할 화면 → 실시간 타이밍 동기화 비교 → 자세 정오 판정.
+
+## 패키지 구조
+
+종목이 늘어나도 공통 기반을 재사용할 수 있도록 **core(뇌) + 종목별 모듈(몸)** 로 나눠 둡니다.
+
+```
+ai_trainer/
+├── core/            # 종목 무관 공통 기반
+│   ├── live_pose/   # MediaPipe Pose(Task API) 웹캠 2D/3D 스켈레톤 추출
+│   ├── game_ui/     # 제너릭 UI 뼈대 (앱 셸, 포즈 브릿지, One-Euro 필터, 스파이크 가드)
+│   ├── camera_*.py  # 카메라 장치 선택 / 렌즈 보정
+│   └── common_skeleton.py, normalization.py, render.py, dataset_config.py
+└── squat/           # 스쿼트 종목 전용 판정 로직
+    ├── game_ui/     # 스쿼트 전용 화면 (3시점 촬영 → 비교/판정 → 결과)
+    ├── dtw_compare.py, online_dtw.py, two_stage_squat.py, mt_stgcn.py
+    ├── view_conditions.py, session_decision.py, phase_*.py
+    └── reference_*.py, aihub_zip.py, *_lifting*.py
+```
+
+앞으로 푸쉬업·요가 등을 추가할 때는 `ai_trainer/squat/`과 같은 레벨에 새 서브패키지를 만들고, 마찬가지로 `ai_trainer.core`를 그대로 재사용합니다.
 
 ## 통합 게임 UI 실행
 

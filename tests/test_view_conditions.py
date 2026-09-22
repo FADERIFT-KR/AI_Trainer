@@ -12,11 +12,11 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from ai_trainer.camera_views import VIEW_FRONT, VIEW_LEFT, VIEW_RIGHT  # noqa: E402
-from ai_trainer.common_skeleton import COMMON_JOINT_NAMES  # noqa: E402
-from ai_trainer.game_ui.framing_check import check_framing, upright_calibration_pose  # noqa: E402
-from ai_trainer.session_decision import UNCERTAIN_CLASS, decide_session, decide_view  # noqa: E402
-from ai_trainer.view_conditions import (  # noqa: E402
+from ai_trainer.squat.camera_views import VIEW_FRONT, VIEW_LEFT, VIEW_RIGHT  # noqa: E402
+from ai_trainer.core.common_skeleton import COMMON_JOINT_NAMES  # noqa: E402
+from ai_trainer.squat.game_ui.framing_check import check_framing, upright_calibration_pose  # noqa: E402
+from ai_trainer.squat.session_decision import UNCERTAIN_CLASS, decide_session, decide_view  # noqa: E402
+from ai_trainer.squat.view_conditions import (  # noqa: E402
     assess_paper_squat_conditions,
     assess_view_rep,
     extract_view_features,

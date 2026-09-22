@@ -26,12 +26,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 
-from ai_trainer.camera_calibration import (  # noqa: E402
+from ai_trainer.core.camera_calibration import (  # noqa: E402
     CameraCalibrationError,
     calibrate_charuco_views,
     create_charuco_board,
 )
-from ai_trainer.live_pose.worker import CameraConfig, _open_camera  # noqa: E402
+from ai_trainer.core.live_pose.worker import CameraConfig, _open_camera  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parent.parent

@@ -5,9 +5,9 @@ import unittest
 
 import numpy as np
 
-from ai_trainer.camera_views import VIEW_FRONT, VIEW_LEFT, VIEW_RIGHT
-from ai_trainer.common_skeleton import COMMON_JOINT_NAMES
-from ai_trainer.game_ui.display_skeleton import ImageGuidedSkeletonDisplay
+from ai_trainer.squat.camera_views import VIEW_FRONT, VIEW_LEFT, VIEW_RIGHT
+from ai_trainer.core.common_skeleton import COMMON_JOINT_NAMES
+from ai_trainer.squat.game_ui.display_skeleton import ImageGuidedSkeletonDisplay
 
 
 IDX = {name: index for index, name in enumerate(COMMON_JOINT_NAMES)}

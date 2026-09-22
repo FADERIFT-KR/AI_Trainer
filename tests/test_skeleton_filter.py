@@ -10,7 +10,7 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from ai_trainer.skeleton_filter import refine_skeleton_sequence  # noqa: E402
+from ai_trainer.squat.skeleton_filter import refine_skeleton_sequence  # noqa: E402
 
 
 JOINTS = ["Hip", "LHip", "LKnee", "LAnkle", "Neck", "LShoulder", "LElbow", "LWrist"]

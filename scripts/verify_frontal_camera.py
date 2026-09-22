@@ -20,10 +20,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import numpy as np
 import pandas as pd  # noqa: E402
 
-from ai_trainer.actor_split import load_air_squat_sequences  # noqa: E402
-from ai_trainer.aihub_zip import JOINT_NAMES, AiHubZip  # noqa: E402
-from ai_trainer.camera_id import PROJECTIONS, evaluate_frame, sample_frame_indices  # noqa: E402
-from ai_trainer.dataset_config import DATASET_PATH  # noqa: E402
+from ai_trainer.squat.actor_split import load_air_squat_sequences  # noqa: E402
+from ai_trainer.squat.aihub_zip import JOINT_NAMES, AiHubZip  # noqa: E402
+from ai_trainer.core.camera_id import PROJECTIONS, evaluate_frame, sample_frame_indices  # noqa: E402
+from ai_trainer.core.dataset_config import DATASET_PATH  # noqa: E402
 
 _NOSE, _LEYE, _REYE = JOINT_NAMES.index("Nose"), JOINT_NAMES.index("LEye"), JOINT_NAMES.index("REye")
 

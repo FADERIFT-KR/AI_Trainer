@@ -4,9 +4,9 @@ import unittest
 
 import numpy as np
 
-from ai_trainer.camera_views import VIEW_FRONT, VIEW_LEFT, VIEW_RIGHT
-from ai_trainer.common_skeleton import COMMON_JOINT_NAMES
-from ai_trainer.multiview_fusion import fuse_recorded_views
+from ai_trainer.squat.camera_views import VIEW_FRONT, VIEW_LEFT, VIEW_RIGHT
+from ai_trainer.core.common_skeleton import COMMON_JOINT_NAMES
+from ai_trainer.squat.multiview_fusion import fuse_recorded_views
 
 
 _IDX = {name: index for index, name in enumerate(COMMON_JOINT_NAMES)}

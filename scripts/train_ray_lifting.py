@@ -15,8 +15,8 @@ import numpy as np  # noqa: E402
 import torch  # noqa: E402
 from torch.utils.data import DataLoader, TensorDataset  # noqa: E402
 
-from ai_trainer.depth_lifting import depth_aware_lifting_loss  # noqa: E402
-from ai_trainer.ray_lifting import RAY_FEATURE_TYPE, ProjectiveCamera, RayTemporalLiftingNet  # noqa: E402
+from ai_trainer.squat.depth_lifting import depth_aware_lifting_loss  # noqa: E402
+from ai_trainer.squat.ray_lifting import RAY_FEATURE_TYPE, ProjectiveCamera, RayTemporalLiftingNet  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parent.parent

@@ -21,9 +21,9 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from ai_trainer.camera_views import VIEW_FRONT, VIEW_LABEL_KO, VIEWS
-from ai_trainer.session_decision import decide_session, format_session_decision
-from ai_trainer.view_conditions import assess_paper_squat_conditions
+from ai_trainer.squat.camera_views import VIEW_FRONT, VIEW_LABEL_KO, VIEWS
+from ai_trainer.squat.session_decision import decide_session, format_session_decision
+from ai_trainer.squat.view_conditions import assess_paper_squat_conditions
 
 
 def _read_jsonl(path: Path) -> list[dict]:

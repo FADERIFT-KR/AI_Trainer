@@ -6,12 +6,12 @@ from unittest.mock import patch
 import numpy as np
 import torch
 
-from ai_trainer.camera_views import VIEW_LEFT, VIEW_RIGHT
-from ai_trainer.common_skeleton import COMMON_JOINT_NAMES
-from ai_trainer.joint_feedback import compute_joint_scores, visible_joint_scores
-from ai_trainer.mt_stgcn import MultiTaskSTGCN, SquatErrorDiagnoser, adjacency_matrix
-from ai_trainer.online_dtw import OnlineSquatSession
-from ai_trainer.two_stage_squat import (
+from ai_trainer.squat.camera_views import VIEW_LEFT, VIEW_RIGHT
+from ai_trainer.core.common_skeleton import COMMON_JOINT_NAMES
+from ai_trainer.squat.joint_feedback import compute_joint_scores, visible_joint_scores
+from ai_trainer.squat.mt_stgcn import MultiTaskSTGCN, SquatErrorDiagnoser, adjacency_matrix
+from ai_trainer.squat.online_dtw import OnlineSquatSession
+from ai_trainer.squat.two_stage_squat import (
     NormalTemplateGate, build_normal_template, choose_threshold, dtw_path,
     mask_occluded_joints, normalize_track, visible_joint_weights, warp_to_reference,
 )
@@ -60,9 +60,9 @@ class TwoStageSquatTest(unittest.TestCase):
 
         evidence = {"min_distance": 0.2, "best_detail": {"per_feature_contrib": {"test": 0.2}}}
         diagnoser = FakeDiagnoser()
-        with patch("ai_trainer.online_dtw.extract_all_features", return_value={}), \
-             patch("ai_trainer.online_dtw.resolve_weights", return_value={}), \
-             patch("ai_trainer.online_dtw.multi_reference_distance", return_value=evidence):
+        with patch("ai_trainer.squat.online_dtw.extract_all_features", return_value={}), \
+             patch("ai_trainer.squat.online_dtw.resolve_weights", return_value={}), \
+             patch("ai_trainer.squat.online_dtw.multi_reference_distance", return_value=evidence):
             good = make_session(squat_track(64), 0.05, diagnoser)
             good._finalize_rep(63)
             self.assertEqual(good.completed_reps[-1].predicted_class, "정상")

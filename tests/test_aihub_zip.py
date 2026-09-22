@@ -17,7 +17,7 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from ai_trainer.aihub_zip import AiHubZip, JOINT_NAMES, SequenceKey  # noqa: E402
+from ai_trainer.squat.aihub_zip import AiHubZip, JOINT_NAMES, SequenceKey  # noqa: E402
 
 
 SEQUENCE = SequenceKey("정상", "초급", "CB01", "1")

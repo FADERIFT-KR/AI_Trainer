@@ -14,7 +14,7 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from ai_trainer.camera_calibration import (  # noqa: E402
+from ai_trainer.core.camera_calibration import (  # noqa: E402
     CameraCalibration,
     CameraCalibrationError,
     FrameUndistorter,

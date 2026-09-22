@@ -10,7 +10,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from ai_trainer.game_ui.reference_track import medoid_rank_from_entry  # noqa: E402
+from ai_trainer.squat.game_ui.reference_track import medoid_rank_from_entry  # noqa: E402
 
 
 class MedoidRankTests(unittest.TestCase):

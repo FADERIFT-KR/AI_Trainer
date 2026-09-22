@@ -29,15 +29,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np  # noqa: E402
 
-from ai_trainer.actor_split import load_air_squat_sequences  # noqa: E402
-from ai_trainer.aihub_zip import AiHubZip  # noqa: E402
-from ai_trainer.dataset_config import DATASET_PATH  # noqa: E402
-from ai_trainer.common_skeleton import COMMON_JOINT_NAMES  # noqa: E402
-from ai_trainer.joint_feedback import TRACKED_JOINTS, _angle_deg  # noqa: E402
-from ai_trainer.lifting_dataset import load_actor_split  # noqa: E402
-from ai_trainer.phase_features import extract_phase_features  # noqa: E402
-from ai_trainer.phase_segmentation import segment_phases  # noqa: E402
-from ai_trainer.reference_pipeline import build_ground_truth_reference  # noqa: E402
+from ai_trainer.squat.actor_split import load_air_squat_sequences  # noqa: E402
+from ai_trainer.squat.aihub_zip import AiHubZip  # noqa: E402
+from ai_trainer.core.dataset_config import DATASET_PATH  # noqa: E402
+from ai_trainer.core.common_skeleton import COMMON_JOINT_NAMES  # noqa: E402
+from ai_trainer.squat.joint_feedback import TRACKED_JOINTS, _angle_deg  # noqa: E402
+from ai_trainer.squat.lifting_dataset import load_actor_split  # noqa: E402
+from ai_trainer.squat.phase_features import extract_phase_features  # noqa: E402
+from ai_trainer.squat.phase_segmentation import segment_phases  # noqa: E402
+from ai_trainer.squat.reference_pipeline import build_ground_truth_reference  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 SPLIT_PATH = ROOT / "configs" / "actor_split.json"

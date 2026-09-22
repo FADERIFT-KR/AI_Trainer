@@ -7,14 +7,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from ai_trainer.actor_split import (  # noqa: E402
+from ai_trainer.squat.actor_split import (  # noqa: E402
     build_actor_split,
     check_no_leakage,
     load_air_squat_sequences,
     save_split,
     summarize_split,
 )
-from ai_trainer.dataset_config import DATASET_PATH  # noqa: E402
+from ai_trainer.core.dataset_config import DATASET_PATH  # noqa: E402
 
 OUT_PATH = Path(__file__).resolve().parent.parent / "configs" / "actor_split.json"
 

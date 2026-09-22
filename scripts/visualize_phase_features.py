@@ -21,11 +21,11 @@ plt.rcParams["font.family"] = "AppleGothic"
 plt.rcParams["axes.unicode_minus"] = False
 import numpy as np  # noqa: E402
 
-from ai_trainer.actor_split import load_air_squat_sequences  # noqa: E402
-from ai_trainer.aihub_zip import AiHubZip  # noqa: E402
-from ai_trainer.dataset_config import DATASET_PATH  # noqa: E402
-from ai_trainer.phase_features import extract_phase_features  # noqa: E402
-from ai_trainer.reference_pipeline import build_ground_truth_reference  # noqa: E402
+from ai_trainer.squat.actor_split import load_air_squat_sequences  # noqa: E402
+from ai_trainer.squat.aihub_zip import AiHubZip  # noqa: E402
+from ai_trainer.core.dataset_config import DATASET_PATH  # noqa: E402
+from ai_trainer.squat.phase_features import extract_phase_features  # noqa: E402
+from ai_trainer.squat.reference_pipeline import build_ground_truth_reference  # noqa: E402
 
 OUT_PATH = Path(__file__).resolve().parent.parent / "output" / "phase_feature_check.png"
 

@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np  # noqa: E402
 
-from ai_trainer.ray_lifting import (  # noqa: E402
+from ai_trainer.squat.ray_lifting import (  # noqa: E402
     RAY_FEATURE_TYPE,
     ProjectiveCamera,
     estimate_projective_camera,

@@ -5,8 +5,8 @@ import unittest
 
 import numpy as np
 
-from ai_trainer.common_skeleton import COMMON_JOINT_NAMES
-from ai_trainer.game_ui.pose_bridge import CommonSkeleton3DBridge
+from ai_trainer.core.common_skeleton import COMMON_JOINT_NAMES
+from ai_trainer.core.game_ui.pose_bridge import CommonSkeleton3DBridge
 
 
 INDEX = {name: i for i, name in enumerate(COMMON_JOINT_NAMES)}

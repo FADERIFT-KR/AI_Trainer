@@ -19,7 +19,7 @@ import torch  # noqa: E402
 from torch import nn  # noqa: E402
 from torch.utils.data import DataLoader, TensorDataset  # noqa: E402
 
-from ai_trainer.lifting_model import TemporalLiftingNet  # noqa: E402
+from ai_trainer.squat.lifting_model import TemporalLiftingNet  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "output" / "lifting_dataset"

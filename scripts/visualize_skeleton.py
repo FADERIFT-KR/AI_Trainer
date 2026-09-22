@@ -30,8 +30,8 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from ai_trainer.aihub_zip import AiHubZip  # noqa: E402
-from ai_trainer.render import draw_skeleton_panel, fit_transform  # noqa: E402
+from ai_trainer.squat.aihub_zip import AiHubZip  # noqa: E402
+from ai_trainer.core.render import draw_skeleton_panel, fit_transform  # noqa: E402
 
 PANEL_W, PANEL_H = 480, 400
 HEADER_H = 28

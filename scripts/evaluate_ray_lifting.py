@@ -15,8 +15,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import numpy as np  # noqa: E402
 import torch  # noqa: E402
 
-from ai_trainer.lifting_model import TemporalLiftingNet  # noqa: E402
-from ai_trainer.ray_lifting import ProjectiveCamera, RayTemporalLiftingNet  # noqa: E402
+from ai_trainer.squat.lifting_model import TemporalLiftingNet  # noqa: E402
+from ai_trainer.squat.ray_lifting import ProjectiveCamera, RayTemporalLiftingNet  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parent.parent

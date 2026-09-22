@@ -4,7 +4,7 @@ import unittest
 
 import torch
 
-from ai_trainer.depth_lifting import TEMPORAL_WINDOW, VideoPose3DDepthNet, depth_aware_lifting_loss
+from ai_trainer.squat.depth_lifting import TEMPORAL_WINDOW, VideoPose3DDepthNet, depth_aware_lifting_loss
 
 
 class DepthLiftingTest(unittest.TestCase):

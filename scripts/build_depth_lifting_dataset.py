@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np  # noqa: E402
 
-from ai_trainer.depth_lifting import TEMPORAL_WINDOW  # noqa: E402
+from ai_trainer.squat.depth_lifting import TEMPORAL_WINDOW  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parent.parent

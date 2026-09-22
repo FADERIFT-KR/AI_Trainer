@@ -29,13 +29,13 @@ import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 import torch  # noqa: E402
 
-from ai_trainer.game_ui.framing_check import check_framing, upright_calibration_pose  # noqa: E402
-from ai_trainer.game_ui.pipeline_worker import DB_DIR, DEFAULT_MODEL_PATH, LIFTING_CKPT, OFFLINE_REPORT_PATH, WEIGHTS_CFG_PATH  # noqa: E402
-from ai_trainer.game_ui.pose_bridge import CommonSkeleton3DBridge  # noqa: E402
-from ai_trainer.lifting_model import TemporalLiftingNet  # noqa: E402
-from ai_trainer.live_pose.mediapipe_pose import MediaPipePoseDetector  # noqa: E402
-from ai_trainer.online_dtw import OnlineSquatSession  # noqa: E402
-from ai_trainer.reference_db_io import load_reference_db  # noqa: E402
+from ai_trainer.squat.game_ui.framing_check import check_framing, upright_calibration_pose  # noqa: E402
+from ai_trainer.squat.game_ui.pipeline_worker import DB_DIR, DEFAULT_MODEL_PATH, LIFTING_CKPT, OFFLINE_REPORT_PATH, WEIGHTS_CFG_PATH  # noqa: E402
+from ai_trainer.core.game_ui.pose_bridge import CommonSkeleton3DBridge  # noqa: E402
+from ai_trainer.squat.lifting_model import TemporalLiftingNet  # noqa: E402
+from ai_trainer.core.live_pose.mediapipe_pose import MediaPipePoseDetector  # noqa: E402
+from ai_trainer.squat.online_dtw import OnlineSquatSession  # noqa: E402
+from ai_trainer.squat.reference_db_io import load_reference_db  # noqa: E402
 
 # 소수 샘플(영상 1~2개) 과적합 방지용 여유폭 — 관찰된 최솟값보다 더 낮게(=더 잘한 것으로),
 # 관찰된 최댓값보다 더 높게(=더 못한 것도 0%로 바로 안 깎이게) 벌려서 lo/hi를 잡는다.

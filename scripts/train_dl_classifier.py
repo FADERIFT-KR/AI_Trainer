@@ -27,15 +27,15 @@ import numpy as np  # noqa: E402
 import torch  # noqa: E402
 import torch.nn as nn  # noqa: E402
 
-from ai_trainer.actor_split import load_air_squat_sequences  # noqa: E402
-from ai_trainer.aihub_zip import AiHubZip  # noqa: E402
-from ai_trainer.dataset_config import DATASET_PATH  # noqa: E402
-from ai_trainer.dl_classifier import CLASSES, PHASES, SmallSquatCNN, build_fixed_vector  # noqa: E402
-from ai_trainer.features import extract_all_features  # noqa: E402
-from ai_trainer.lifting_dataset import load_actor_split  # noqa: E402
-from ai_trainer.phase_features import extract_phase_features  # noqa: E402
-from ai_trainer.phase_segmentation import segment_phases  # noqa: E402
-from ai_trainer.reference_pipeline import build_ground_truth_reference  # noqa: E402
+from ai_trainer.squat.actor_split import load_air_squat_sequences  # noqa: E402
+from ai_trainer.squat.aihub_zip import AiHubZip  # noqa: E402
+from ai_trainer.core.dataset_config import DATASET_PATH  # noqa: E402
+from ai_trainer.squat.dl_classifier import CLASSES, PHASES, SmallSquatCNN, build_fixed_vector  # noqa: E402
+from ai_trainer.squat.features import extract_all_features  # noqa: E402
+from ai_trainer.squat.lifting_dataset import load_actor_split  # noqa: E402
+from ai_trainer.squat.phase_features import extract_phase_features  # noqa: E402
+from ai_trainer.squat.phase_segmentation import segment_phases  # noqa: E402
+from ai_trainer.squat.reference_pipeline import build_ground_truth_reference  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 SPLIT_PATH = ROOT / "configs" / "actor_split.json"
