@@ -11,6 +11,7 @@ FPS 스무딩, 에러 처리)을 따르되 파이프라인 뒷단(Common Skeleto
 from __future__ import annotations
 
 import json
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +21,7 @@ import torch
 from PyQt5.QtCore import QThread, pyqtSignal
 
 from ai_trainer.dl_classifier import DLSquatClassifier
+from ai_trainer.bone_length_constraint import calibrate_leg_lengths, constrain_leg_lengths
 from ai_trainer.joint_feedback import JointScore, compute_joint_scores
 from ai_trainer.live_pose.mediapipe_pose import MediaPipePoseDetector, PoseBackendError
 from ai_trainer.live_pose.render import draw_2d_pose
@@ -32,6 +34,7 @@ from ai_trainer.scoring import PASS_SCORE_THRESHOLD, distance_to_score
 from .error_explain import annotate_error
 from .framing_check import check_framing, guide_box as compute_guide_box
 from .joint_overlay import draw_joint_feedback
+from .pose_diagnostics import PoseDiagnostics
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_MODEL_PATH = ROOT / "models" / "pose_landmarker_full.task"
@@ -60,6 +63,10 @@ class PipelineStatus:
     live_score: float | None  # partial_distance["정상"]을 score_calib으로 환산한 실시간 0~100 유사도(%)
     joint_scores: list[JointScore] | None  # 관절별 위치/각도 오차 (joint_feedback.compute_joint_scores)
     aligned_frame: np.ndarray | None  # 정규화 완료 (18,3) 3D — 화면 중앙 "내 3D 스켈레톤" 패널용
+    diagnostic_enabled: bool = False
+    observation_id: int | None = None
+    sample_index: int | None = None
+    sample_timestamp: float | None = None
 
 
 class SquatPipelineWorker(QThread):
@@ -88,7 +95,12 @@ class SquatPipelineWorker(QThread):
     def run(self) -> None:
         capture = None
         detector = None
+        trace = None
         try:
+            trace_path = os.environ.get("AI_TRAINER_POSE_TRACE")
+            bone_constraint_enabled = os.environ.get("AI_TRAINER_BONE_LENGTH_CONSTRAINT") == "1"
+            if trace_path:
+                trace = PoseDiagnostics(trace_path)
             try:
                 import cv2
             except ImportError as error:
@@ -117,7 +129,7 @@ class SquatPipelineWorker(QThread):
             if DL_CLASSIFIER_CKPT.exists() and DL_CLASSIFIER_NORM.exists():
                 dl_classifier = DLSquatClassifier.load(DL_CLASSIFIER_CKPT, DL_CLASSIFIER_NORM)
             else:
-                print(f"[경고] DL 분류기 체크포인트 없음({DL_CLASSIFIER_CKPT}) — DTW 판정으로 대체합니다. "
+                print(f"[경고] DL 분류기 체크포인트 없음({DL_CLASSIFIER_CKPT}) - DTW 판정으로 대체합니다. "
                       "python3 scripts/train_dl_classifier.py 실행 필요.")
 
             # 실시간 3D 소스: 자체 학습한 lifting 모델(model) 대신 MediaPipe 자체
@@ -138,6 +150,9 @@ class SquatPipelineWorker(QThread):
 
             bridge = CommonSkeletonBridge(min_visibility=self.config.confidence)
             bridge3d = CommonSkeleton3DBridge(min_visibility=self.config.confidence)
+            constraint_candidates: list[tuple[int, np.ndarray]] = []
+            constraint_calibration = None
+            constraint_source_observation_ids: list[int] = []
 
             detector = MediaPipePoseDetector(
                 self.model_path,
@@ -148,11 +163,12 @@ class SquatPipelineWorker(QThread):
 
             self.status_changed.emit("카메라를 여는 중…")
             capture = _open_camera(cv2, self.config)
-            self.status_changed.emit("실행 중")
+            self.status_changed.emit("실행 중 · 뼈 길이 보정 시험" if bone_constraint_enabled else "실행 중")
 
             previous_time = time.perf_counter()
             smoothed_fps = 0.0
             consecutive_failures = 0
+            observation_id = -1
 
             while not self.isInterruptionRequested():
                 success, frame_bgr = capture.read()
@@ -163,6 +179,8 @@ class SquatPipelineWorker(QThread):
                     self.msleep(10)
                     continue
                 consecutive_failures = 0
+                frame_timestamp = time.perf_counter()
+                observation_id += 1  # Successful camera reads, including unrecorded observations.
 
                 display_bgr = np.ascontiguousarray(frame_bgr[:, ::-1] if self.config.mirror else frame_bgr)
                 observation = detector.process(np.ascontiguousarray(display_bgr[:, :, ::-1]))
@@ -181,6 +199,7 @@ class SquatPipelineWorker(QThread):
                 live_score = None
                 joint_scores = None
                 aligned_frame = None
+                status = None
                 pose_found = observation is not None
                 framing_ok = False
                 framing_message = "카메라 앞에 서주세요"
@@ -226,9 +245,54 @@ class SquatPipelineWorker(QThread):
                         # common2d는 화면에 그릴 위치(말풍선/관절 색상 오버레이)용으로만 쓰고,
                         # 실제 phase/DTW 판정은 common3d(MediaPipe 자체 3D)로 한다.
                         common2d, frozen_mask, mean_conf = bridge.update(observation.image_landmarks, w, h)
-                        common3d, _frozen3d, _mean_conf3d = bridge3d.update(observation.world_landmarks)
-                        n_frozen = int(frozen_mask.sum())
-                        status = session.push_frame_3d(common3d)
+                        common3d, _frozen3d, _mean_conf3d = bridge3d.update(observation.world_landmarks, timestamp=frame_timestamp)
+                        n_frozen = int(_frozen3d.sum())
+                        mean_conf = _mean_conf3d
+                        session_input3d = common3d
+                        if bone_constraint_enabled and constraint_calibration is None:
+                            constraint_candidates.append((observation_id, common3d.copy()))
+                            try:
+                                candidate_frames = np.stack([frame for _, frame in constraint_candidates])
+                                constraint_calibration = calibrate_leg_lengths(candidate_frames)
+                                constraint_source_observation_ids = [
+                                    constraint_candidates[index][0] for index in constraint_calibration.source_indices
+                                ]
+                            except ValueError as error:
+                                if "Need 8 standing frames" not in str(error):
+                                    raise
+                            if constraint_calibration is None:
+                                session_input3d = None
+                                framing_message = "뼈 길이 보정 준비 중 — 일어서서 잠시 유지해 주세요"
+                        if constraint_calibration is not None:
+                            session_input3d = constrain_leg_lengths(common3d, constraint_calibration)
+                        status = (
+                            session.push_frame_3d(session_input3d, timestamp=frame_timestamp)
+                            if session_input3d is not None else None
+                        )
+                        if status and status.get("status") == "calibrating":
+                            framing_message = status.get("message", "준비 자세를 유지해 주세요")
+                        if trace is not None:
+                            # draw_2d_pose draws on a copy; display_bgr remains the exact
+                            # pre-overlay BGR equivalent of this observation's RGB input.
+                            trace.write_observation(
+                                display_bgr, observation_id=observation_id, mirrored=self.config.mirror,
+                                timestamp=frame_timestamp, image_size=[w, h], fps=smoothed_fps, schema_version=3,
+                                image_landmarks=observation.image_landmarks,
+                                world_landmarks=observation.world_landmarks,
+                                common3d=common3d, frozen3d=_frozen3d,
+                                session_input3d=session_input3d,
+                                bone_length_constraint={
+                                    "enabled": bone_constraint_enabled,
+                                    "calibrated": constraint_calibration is not None,
+                                    "source_observation_ids": constraint_source_observation_ids,
+                                    "ground_contact_constraint": False,
+                                },
+                                aligned_frame=status.get("aligned_frame") if status else None,
+                                phase=status.get("phase") if status else None,
+                                sample_index=status.get("emit_frame", status.get("frame")) if status else None,
+                                sample_timestamp=status.get("sample_timestamp") if status else None,
+                                completed_rep=status.get("completed_rep") if status else None,
+                            )
                         if status is not None and status.get("status") == "ok":
                             phase = status["phase"]
                             partial = status["partial_distance"]
@@ -249,7 +313,7 @@ class SquatPipelineWorker(QThread):
                                 # 더 가깝다는 이유만으로 오류 말풍선을 띄우지 않는다 —
                                 # judge_label(screens.py)과 동일한 기준으로 통일.
                                 passes = live_score is not None and live_score >= PASS_SCORE_THRESHOLD
-                                if best_class != "정상" and not passes:
+                                if best_class != "정상" and not passes and not partial.get("provisional", False):
                                     # 어떤 오류유형에 가장 가까운지에 따라 관련 관절 옆에 말풍선 설명을 붙인다
                                     # (예: 고관절오류 -> 고관절/상체 근처, claude.md 9장 오류유형별 feature 참고).
                                     annotate_error(video_bgr, common2d, best_class)
@@ -282,6 +346,10 @@ class SquatPipelineWorker(QThread):
                         live_score=live_score,
                         joint_scores=joint_scores,
                         aligned_frame=aligned_frame,
+                        diagnostic_enabled=trace is not None,
+                        observation_id=observation_id if trace is not None else None,
+                        sample_index=status.get("emit_frame", status.get("frame")) if trace is not None and status else None,
+                        sample_timestamp=status.get("sample_timestamp") if trace is not None and status else None,
                     )
                 )
         except (PoseBackendError, RuntimeError, ValueError, OSError) as error:
@@ -289,6 +357,8 @@ class SquatPipelineWorker(QThread):
         except Exception as error:  # noqa: BLE001
             self.fatal_error.emit(f"파이프라인 처리 중 예기치 않은 오류: {error}")
         finally:
+            if trace is not None:
+                trace.close()
             if capture is not None:
                 capture.release()
             if detector is not None:

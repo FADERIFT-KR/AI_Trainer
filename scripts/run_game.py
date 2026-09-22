@@ -17,6 +17,8 @@ Weighted DTW 채점은 이 브랜치(feature/dtw-pipeline 유래)의 AI Hub 기�
 from __future__ import annotations
 
 import sys
+import argparse
+import os
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -28,6 +30,23 @@ from ai_trainer.game_ui.app import GameWindow  # noqa: E402
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="AI Trainer game")
+    parser.add_argument("--pose-trace", metavar="PATH", help="Save local JSONL + pre-overlay observation PNGs (new files; includes camera images)")
+    parser.add_argument(
+        "--bone-length-constraint", action="store_true",
+        help="Experimental: constrain legs/feet to subject calibration lengths before Phase/REP/classification",
+    )
+    args = parser.parse_args()
+    if args.pose_trace:
+        os.environ["AI_TRAINER_POSE_TRACE"] = str(Path(args.pose_trace).resolve())
+    if args.bone_length_constraint:
+        os.environ["AI_TRAINER_BONE_LENGTH_CONSTRAINT"] = "1"
+    # Windows redirected output can use cp949, which cannot encode every UI/log
+    # character. Logging must not stop the camera pipeline on such characters.
+    for stream in (sys.stdout, sys.stderr):
+        if stream is not None and hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="backslashreplace")
+
     QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
     app = QApplication(sys.argv[:1])

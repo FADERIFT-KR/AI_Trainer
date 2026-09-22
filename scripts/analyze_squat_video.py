@@ -177,8 +177,8 @@ def main() -> None:
 
             if framing_ok and session_active:
                 common2d, frozen_mask, mean_conf = bridge.update(observation.image_landmarks, w, h)
-                common3d, _frozen3d, _mean_conf3d = bridge3d.update(observation.world_landmarks)
-                status = session.push_frame_3d(common3d)
+                common3d, _frozen3d, _mean_conf3d = bridge3d.update(observation.world_landmarks, timestamp=frame_idx / src_fps)
+                status = session.push_frame_3d(common3d, timestamp=frame_idx / src_fps)
                 if status is not None and status.get("status") == "ok":
                     phase = status["phase"]
                     partial = status["partial_distance"]

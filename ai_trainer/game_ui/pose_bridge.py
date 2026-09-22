@@ -109,8 +109,8 @@ class CommonSkeleton3DBridge:
     AI Hub 데이터는 CSV/JSON만 쓴다는 프로젝트 방침(claude.md)상 원본 영상에 MediaPipe를
     돌릴 수 없어 레퍼런스 DB 쪽은 그대로 CSV 기반(ground_truth/operational)을 유지한다
     — 이 브릿지는 실시간 사용자 입력 쪽에만 쓰이고, 비교 대상은 ground_truth tier(8카메라
-    삼각측량 실측 3D)로 맞춘다(둘 다 "실제 3D"라는 도메인이 이제는 lifting 모델을 거치지
-    않고도 서로 맞아떨어짐).
+    삼각측량 실측 3D)를 사용한다. 다만 단안 추정과 다중 카메라 실측은 오차 특성이
+    다르며, 좌표 정규화만으로 분포가 일치하거나 판정 정확도가 보장되지는 않는다.
 
     2D 브릿지(CommonSkeletonBridge)와 동일한 confidence-freeze + 지터 저감(1€ Filter)
     패턴을 그대로 적용한다.
@@ -134,7 +134,7 @@ class CommonSkeleton3DBridge:
         # 추정된다.
         self._smoother = OneEuroFilter(n_points=len(COMMON_JOINT_NAMES), n_dims=3, min_cutoff=0.8, beta=12.0)
 
-    def update(self, world_landmarks: np.ndarray) -> tuple[np.ndarray, np.ndarray, float]:
+    def update(self, world_landmarks: np.ndarray, *, timestamp: float | None = None) -> tuple[np.ndarray, np.ndarray, float]:
         """world_landmarks: (33,4) [x,y,z,visibility], 미터 단위 실좌표.
 
         반환: (common 18x3 3D좌표(결측은 freeze), frozen_mask(18,), mean_confidence)
@@ -158,8 +158,20 @@ class CommonSkeleton3DBridge:
                 raw[i] = pos_all[idx]
                 conf[i] = vis_all[idx]
 
-        good_mask = conf >= self.min_visibility
-        raw = self._smoother(raw, good_mask)
+        # Filter/cache foot points relative to their ankle. World landmarks are
+        # hip-relative: freezing a toe in that frame while the ankle moves during
+        # a squat stretches the foot and manufactures an ankle-angle change.
+        foot_pairs = []
+        for side in ("L", "R"):
+            ankle = COMMON_JOINT_NAMES.index(side + "Ankle")
+            for name in ("Heel", "BigToe"):
+                foot = COMMON_JOINT_NAMES.index(side + name)
+                raw[foot] -= raw[ankle]
+                conf[foot] = min(conf[foot], conf[ankle])
+                foot_pairs.append((foot, ankle))
+
+        good_mask = (conf >= self.min_visibility) & np.isfinite(raw).all(axis=1)
+        raw = self._smoother(raw, good_mask, timestamp=timestamp)
 
         frozen = np.zeros(len(COMMON_JOINT_NAMES), dtype=bool)
         out = self.last_good.copy()
@@ -172,6 +184,9 @@ class CommonSkeleton3DBridge:
                 frozen[i] = True
                 if not self.has_good[i]:
                     out[i] = raw[i]
+
+        for foot, ankle in foot_pairs:
+            out[foot] += out[ankle]
 
         # MediaPipe world_landmarks는 대략 Hip 중심이지만, online_dtw._process_3d_frame이
         # 기대하는 "정확히 Hip=원점" 계약(lifting 모델 경로와 동일)을 보장하기 위해 우리

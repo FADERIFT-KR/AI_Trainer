@@ -53,8 +53,9 @@ class OneEuroFilter:
         self.x_prev: np.ndarray | None = None
         self.dx_prev = np.zeros((n_points, n_dims))
         self.initialized = np.zeros(n_points, dtype=bool)
+        self.last_timestamp: float | None = None
 
-    def __call__(self, x: np.ndarray, active: np.ndarray) -> np.ndarray:
+    def __call__(self, x: np.ndarray, active: np.ndarray, *, timestamp: float | None = None) -> np.ndarray:
         """x: (N,D) 이번 프레임 관측치(D=2인 픽셀 좌표 또는 D=3인 world 좌표 등).
         active: (N,) 이번 프레임에 필터링할("good") 관절 마스크.
 
@@ -65,6 +66,12 @@ class OneEuroFilter:
             self.x_prev = x.copy()
         out = x.copy()
         dt = 1.0 / self.freq
+        if timestamp is not None:
+            if not np.isfinite(timestamp) or (self.last_timestamp is not None and timestamp <= self.last_timestamp):
+                raise ValueError("Filter timestamps must be finite and strictly increasing")
+            if self.last_timestamp is not None:
+                dt = timestamp - self.last_timestamp
+            self.last_timestamp = timestamp
 
         idx = np.where(active)[0]
         if idx.size == 0:
@@ -79,6 +86,7 @@ class OneEuroFilter:
         cutoff = self.min_cutoff + self.beta * np.abs(dx_hat)
         a = _smoothing_factor(dt, cutoff)
         x_hat = _exp_smooth(a, x[idx], self.x_prev[idx])
+        x_hat[first_time] = x[idx][first_time]
 
         out[idx] = x_hat
         self.x_prev[idx] = x_hat

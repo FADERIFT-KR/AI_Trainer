@@ -18,14 +18,14 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from ai_trainer.common_skeleton import COMMON_BONE_COLORS_BGR, COMMON_BONE_INDEX_PAIRS
 from ai_trainer.joint_feedback import STATUS_BAD, STATUS_GOOD, STATUS_WARNING, JointScore, TRACKED_JOINTS
 from ai_trainer.live_pose.window import ImagePanel
 from ai_trainer.live_pose.worker import CameraConfig
-from ai_trainer.render import draw_skeleton_panel, fit_transform
 from ai_trainer.scoring import PASS_SCORE_THRESHOLD
 
 from .pipeline_worker import PipelineStatus, SquatPipelineWorker
+from ai_trainer.common_skeleton import COMMON_BONE_COLORS_BGR, COMMON_BONE_INDEX_PAIRS
+from ai_trainer.render import draw_skeleton_panel, fit_transform
 from .reference_track import DIFFICULTY_LABELS, REFERENCE_FPS, ReferenceTrack, difficulty_medoid_ranks, list_available
 
 REF_PANEL_W, REF_PANEL_H = 480, 480
@@ -265,6 +265,13 @@ class CompareScreen(QWidget):
         self.camera_panel = ImagePanel("카메라 준비 중…")
         self.my_skeleton_panel = ImagePanel("스켈레톤 준비 중…")
         self.ref_panel = ImagePanel("레퍼런스 준비 중…")
+        self.camera_diagnostic = QLabel()
+        self.skeleton_diagnostic = QLabel()
+        self._displayed_skeleton_source = None
+        for label in (self.camera_diagnostic, self.skeleton_diagnostic):
+            label.setStyleSheet("font-size: 11px; color: #aaaaaa;")
+            label.setWordWrap(True)
+            label.hide()
 
         self.status_label = QLabel("초기화 중…")
         self.status_label.setStyleSheet("font-size: 15px; font-weight: 600;")
@@ -287,8 +294,8 @@ class CompareScreen(QWidget):
 
         views = QHBoxLayout()
         views.setSpacing(12)
-        views.addWidget(self._panel("웹캠 · 내 자세", self.camera_panel), 1)
-        views.addWidget(self._panel("내 3D 스켈레톤", self.my_skeleton_panel), 1)
+        views.addWidget(self._panel("웹캠 · 내 자세", self.camera_panel, self.camera_diagnostic), 1)
+        views.addWidget(self._panel("내 3D 스켈레톤", self.my_skeleton_panel, self.skeleton_diagnostic), 1)
         views.addWidget(self._panel("정상 레퍼런스", self.ref_panel), 1)
         views.addWidget(joint_panel, 0)
 
@@ -444,10 +451,12 @@ class CompareScreen(QWidget):
         self.game_result_panel.setGeometry((self.width() - w) // 2, (self.height() - h) // 2, w, h)
 
     @staticmethod
-    def _panel(title: str, image: ImagePanel) -> QGroupBox:
+    def _panel(title: str, image: ImagePanel, diagnostic: QLabel | None = None) -> QGroupBox:
         group = QGroupBox(title)
         v = QVBoxLayout(group)
         v.setContentsMargins(10, 16, 10, 10)
+        if diagnostic is not None:
+            v.addWidget(diagnostic)
         v.addWidget(image)
         return group
 
@@ -551,6 +560,10 @@ class CompareScreen(QWidget):
         return group
 
     def start(self, class_label: str, medoid_rank: int) -> None:
+        self._displayed_skeleton_source = None
+        for label in (self.camera_diagnostic, self.skeleton_diagnostic):
+            label.clear()
+            label.hide()
         # 화면에 보여주는 "정답" 레퍼런스와 DTW 점수 계산 둘 다 Ground Truth 계층(AI Hub
         # 8카메라 삼각측량 실측 3D) 사용 — 실시간 3D 소스가 자체 lifting 모델(camera1 단일뷰
         # 근사)에서 MediaPipe 자체 world_landmarks로 바뀌면서(2026-08-28), 비교 대상도 그
@@ -654,22 +667,34 @@ class CompareScreen(QWidget):
         )
         self.ref_panel.set_bgr_frame(canvas)
 
-    def _update_my_skeleton_panel(self, status: PipelineStatus) -> None:
-        """웹캠(영상+오버레이) / 정상 레퍼런스 사이에, 내 3D 자세만 크게 스켈레톤으로
-        그려서 보여준다(요청사항). status.aligned_frame은 online_dtw.OnlineSquatSession이
-        DTW에 쓰는 것과 동일한, Hip-center+Scale+Orientation 정규화까지 끝난 좌표라서
-        레퍼런스와 같은 fit_transform(self._ref_tf)을 그대로 재사용해도 스케일이 맞는다
-        — 두 스켈레톤을 나란히 놓고 비교하기도 더 쉬워진다."""
-        if status.aligned_frame is None or self._ref_tf is None:
-            return
+    def _update_my_skeleton_panel(self, status: PipelineStatus) -> bool:
+        """Display the front view; scoring still uses all three coordinates."""
+        if status.aligned_frame is None or self.ref_track is None:
+            return False
         canvas = np.zeros((REF_PANEL_H, REF_PANEL_W, 3), dtype=np.uint8)
-        points_px = self._ref_tf(status.aligned_frame[:, [0, 1]])
         draw_skeleton_panel(
-            canvas, (0, 0), REF_PANEL_W, REF_PANEL_H, points_px,
+            canvas, (0, 0), REF_PANEL_W, REF_PANEL_H,
+            self._ref_tf(status.aligned_frame[:, [0, 1]]),
             f"내 자세 ({PHASE_LABEL_KR.get(status.phase, '-')})", None,
             COMMON_BONE_INDEX_PAIRS, COMMON_BONE_COLORS_BGR,
         )
         self.my_skeleton_panel.set_bgr_frame(canvas)
+        return True
+
+    def _update_panel_diagnostics(self, status: PipelineStatus, updated: bool) -> None:
+        if updated:
+            self._displayed_skeleton_source = (status.observation_id, status.sample_index, status.sample_timestamp)
+        for label in (self.camera_diagnostic, self.skeleton_diagnostic):
+            label.setVisible(status.diagnostic_enabled)
+        if not status.diagnostic_enabled:
+            return
+        self.camera_diagnostic.setText(f"진단 · 영상 observation_id={status.observation_id}")
+        source = self._displayed_skeleton_source
+        text = "출처 없음 (아직 그린 좌표 없음)" if source is None else (
+            f"출처 observation_id={source[0]} · sample_index={source[1]}\n"
+            f"sample_timestamp={source[2] if source[2] is not None else '기록 없음'} s"
+        )
+        self.skeleton_diagnostic.setText(f"진단 · {'갱신' if updated else '유지'} · {text}\n출처 ID는 처리 호출 기준이며 원본 영상과 동일 시각을 뜻하지 않습니다.")
 
     def _update_countdown(self, status: PipelineStatus) -> None:
         if self.worker is not None and self.worker.session_active:
@@ -700,6 +725,7 @@ class CompareScreen(QWidget):
         )
 
     _REP_POPUP_STYLES = {
+        "neutral": "background: rgba(30,40,55,225); color: #cfd6e2; border: 3px solid #8f9aaa;",
         "good": "background: rgba(20,60,35,225); color: #8bffab; border: 3px solid #4ade80;",
         "bad": "background: rgba(60,20,20,225); color: #ffb3b3; border: 3px solid #ff6b6b;",
     }
@@ -747,7 +773,8 @@ class CompareScreen(QWidget):
 
     def _on_status(self, status: PipelineStatus) -> None:
         self.camera_panel.set_bgr_frame(status.video_bgr)
-        self._update_my_skeleton_panel(status)
+        updated = self._update_my_skeleton_panel(status)
+        self._update_panel_diagnostics(status, updated)
         self._update_phase_stepper(status)
         self.fps_label.setText(f"{status.fps:4.1f} FPS")
         self.rep_label.setText(f"REP {status.rep_count}")
@@ -788,7 +815,11 @@ class CompareScreen(QWidget):
             # PASS_SCORE_THRESHOLD 이상), 다른 오류 클래스가 DTW distance상 근소하게
             # 더 가깝다는 이유만으로 오류로 확정하지 않는다 — 상승 구간 등에서 자세가
             # 살짝만 틀어져도 바로 오류로 뜨던 문제(실사용 확인) 수정.
-            if status.live_score is not None and status.live_score >= PASS_SCORE_THRESHOLD:
+            if status.partial_distance.get("provisional", False):
+                self._set_judge(f"동작 비교 중 · 완료 후 판정{score_suffix}", "neutral")
+                self._bad_streak_key = None
+                self._bad_streak_count = 0
+            elif status.live_score is not None and status.live_score >= PASS_SCORE_THRESHOLD:
                 self._set_judge(f"자세 양호{score_suffix}", "good")
                 self._bad_streak_key = None
                 self._bad_streak_count = 0
@@ -830,38 +861,36 @@ class CompareScreen(QWidget):
             score_text = f"{r.score_vs_normal:.0f}%" if r.score_vs_normal is not None else "-"
             # 실시간 judge_label과 동일한 기준: "정상" 대비 유사도가 충분히 높으면
             # 다른 클래스가 근소 우세였어도 최종 판정을 "정상"으로 표시.
+            # Reference coverage remains diagnostic metadata, not a display gate.
             if r.score_vs_normal is not None and r.score_vs_normal >= PASS_SCORE_THRESHOLD:
                 display_class, confidence_note = "정상", ""
             else:
                 display_class = r.predicted_class
                 confidence_note = "" if margin > JUDGE_MARGIN_THRESHOLD else " (근소한 차이 — 참고용)"
 
-            # 판정 근거: DTW가 실제로 비교에 쓴 요소(코드명 -> 한국어) + 관절별 실측
-            # 각도/합격범위/초과분. "왜 이 판정이 나왔는지 숫자로 보여달라"는 실사용
-            # 피드백 대응 — judge_label/팝업의 클래스명만으론 검증할 방법이 없었다.
+            # Show estimated angles from the completed repetition. These are
+            # not ground-truth measurements or a causal explanation of a class.
             feature_labels = [FEATURE_LABEL_KR.get(name, name) for name, _ in r.top_contributing_features]
-            joint_lines = [f"{js.name} {joint_detail_text(js)}" for js in (self._latest_joint_scores or [])]
-            joint_summary = "  |  ".join(joint_lines) if joint_lines else "-"
+            # The latest live joint scores are from the standing/end frame, not
+            # the bottom of the completed squat. Do not present them as its cause.
+            angles = r.angle_summary or {}
+            angle_parts = []
+            for key, label in (("knee_min_deg", "최저 무릎각"), ("hip_min_deg", "최저 고관절각")):
+                if key in angles:
+                    angle_parts.append(f"{label} 좌/우 {angles[key][0]:.0f}°/{angles[key][1]:.0f}°")
+            if "torso_max_deg" in angles:
+                angle_parts.append(f"최대 상체기울기 {angles['torso_max_deg']:.0f}°")
+            joint_summary = " · ".join(angle_parts) or "추정각 기록 없음"
 
             self.result_label.setText(
-                f"REP 종료 → 판정: {display_class}{confidence_note}  |  유사도: {score_text}  |  "
-                f"주요 원인: {', '.join(feature_labels)}\n"
-                f"관절별 근거: {joint_summary}"
+                f"REP 종료 → 3D 추정 판정: {display_class}{confidence_note}  |  유사도: {score_text}  |  "
+                f"거리 차이 주요 항목: {', '.join(feature_labels)}\n"
+                f"이번 동작의 추정각: {joint_summary}"
             )
-            # 오류 REP에 대한 구체적인 원인 문구 — 벗어난 관절이 있으면 그 관절의 실측
-            # 각도/합격범위/초과분을 그대로 쓰고(가장 구체적), 없으면 DTW 주요 feature명으로
-            # 대체한다. 팝업뿐 아니라 최종 결과화면(_show_game_result)에도 재사용한다
-            # (요청사항: "엉덩이하방오류가 자세가 정확히 어떻게 문제됐는지 완료화면에 띄워줘").
-            failing_js = [js for js in (self._latest_joint_scores or []) if not js.within_angle_tolerance]
             if display_class == "정상":
                 fail_reason = ""
-            elif failing_js:
-                # 결과화면에 REP마다 다 나열되면 길어지니 최대 2개 관절만 구체적으로 보여준다.
-                fail_reason = ", ".join(f"{js.name} {joint_detail_text(js)}" for js in failing_js[:2])
-                if len(failing_js) > 2:
-                    fail_reason += f" 외 {len(failing_js) - 2}개"
             else:
-                fail_reason = feature_labels[0] if feature_labels else ""
+                fail_reason = "3D 추정: " + joint_summary
 
             self._session_reps.append({
                 "index": r.rep_index, "display_class": display_class, "score_text": score_text,
@@ -876,8 +905,7 @@ class CompareScreen(QWidget):
             elif display_class == "정상":
                 self._show_rep_popup(f"성공! 👍\n{score_text}", "good")
             else:
-                short_reason = f"{failing_js[0].name} 등 {len(failing_js)}개 관절 벗어남" if failing_js else fail_reason
-                self._show_rep_popup(f"REP {r.rep_index + 1} 완료\n{display_class}\n{short_reason}", "bad")
+                self._show_rep_popup(f"REP {r.rep_index + 1} 완료\n3D 추정 판정: {display_class}", "bad")
 
     def _show_game_result(self) -> None:
         """TARGET_REPS(=5)를 채운 뒤 뜨는 결과 화면. 확인 버튼을 누르기 전까지 남아있고

@@ -27,7 +27,7 @@ class ErrorExplain:
 ERROR_EXPLANATIONS: dict[str, ErrorExplain] = {
     "발뒤꿈치오류": ErrorExplain(("LHeel", "RHeel"), "발뒤꿈치가 들려요"),
     "엉덩이하방오류": ErrorExplain(("Hip",), "덜 앉았어요, 더 내려가세요"),
-    "고관절오류": ErrorExplain(("Hip", "Neck"), "상체가 많이 기울었어요"),
+    "고관절오류": ErrorExplain(("Hip", "Neck"), "고관절 움직임을 확인해 주세요"),
 }
 
 

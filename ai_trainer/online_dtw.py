@@ -23,9 +23,9 @@ fps 가정
 `vel_eps`/`debounce_n`/`calib_frames`/`_causal_velocity`의 `win` 등은 전부 "프레임 수"
 단위 임계값이며, AI Hub 레퍼런스 데이터가 30fps로 캡처되었다는 사실(claude.md 7장,
 annotation.json의 start_time/end_time 대비 start_frame/end_frame 역산으로 검증)에
-맞춰 조정되었다. 웹캠도 `CameraConfig.requested_fps=30`으로 30fps를 목표로 하므로
-프레임 수 기반 임계값이 그대로 맞는다. 실제 처리 속도가 추론 부하 등으로 30fps보다
-크게 떨어지면 이 임계값들의 실제 시간 의미가 달라지므로 재보정이 필요할 수 있다.
+맞춰 조정되었다. 실시간 `push_frame_3d(..., timestamp=...)`는 실제 수신 시각을
+사용해 관측 사이를 30Hz로 보간한다. 요청한 카메라 FPS와 실제 처리 FPS를 혼동하지
+않는다. 타임스탬프를 생략하는 오프라인 호출만 입력이 이미 30Hz라고 가정한다.
 """
 from __future__ import annotations
 
@@ -41,6 +41,10 @@ from .dtw_compare import PHASES, multi_reference_distance, resolve_weights
 from .features import extract_all_features
 from .lifting_dataset import WINDOW_T
 from .normalization import body_axes, hip_center_3d, leg_length_scale
+from .pose_sampling import PoseSampler
+from .phase_features import _angle_deg, extract_phase_features
+from .phase_segmentation import segment_phases
+from .reference_support import ReferenceSupport
 
 _IDX = {name: i for i, name in enumerate(COMMON_JOINT_NAMES)}
 _L_ANKLE, _R_ANKLE = _IDX["LAnkle"], _IDX["RAnkle"]
@@ -61,6 +65,13 @@ class RepResult:
     raw_distance_by_class: dict[str, float]
     score_vs_normal: float | None
     top_contributing_features: list[tuple[str, float]]
+    classifier_source: str = "dtw"
+    class_probabilities: dict[str, float] | None = None
+    phase_bounds: dict | None = None
+    angle_summary: dict | None = None
+    assessment_supported: bool = True
+    assessment_note: str | None = None
+    reference_support: dict | None = None
 
 
 @dataclass
@@ -143,7 +154,7 @@ class OnlineSquatSession:
         return self._process_3d_frame(hip_centered_3d, emit_idx)
 
     # ------------------------------------------------------------------
-    def push_frame_3d(self, hip_centered_3d_frame: np.ndarray) -> dict | None:
+    def push_frame_3d(self, hip_centered_3d_frame: np.ndarray, *, timestamp: float | None = None) -> dict | None:
         """hip_centered_3d_frame: (18,3) 이미 3D로 복원된, Hip-centered common-skeleton 좌표
         (예: MediaPipe `world_landmarks` 기반 `CommonSkeleton3DBridge` 출력). `push_frame`과
         달리 2D 버퍼링/윈도우/lifting 모델 추론을 전혀 거치지 않고 매 프레임 즉시 처리한다
@@ -152,21 +163,59 @@ class OnlineSquatSession:
         자체 학습한 lifting 모델(AI Hub camera1 단일 카메라로만 학습)이 실제 아이폰 촬영
         영상에서 학습 분포 밖 체형/팔자세/화각을 만나면 스쿼트 깊이를 심하게 과소평가하는
         것이 확인되어(2026-08-28), 실시간 파이프라인은 이 경로로 MediaPipe 자체의 3D
-        추정치(훨씬 크고 다양한 데이터로 학습됨, 같은 상황에서 깊이를 정확히 잡아냄)를
-        직접 사용한다. AI Hub CSV 기반 오프라인 평가/합성 테스트는 원본 데이터가 2D
+        추정치를 직접 사용한다. 이 추정치가 실측 3D와 같은 정확도라는 뜻은 아니다.
+        AI Hub CSV 기반 오프라인 평가/합성 테스트는 원본 데이터가 2D
         좌표뿐이라 여전히 `push_frame`(lifting 모델 경로)을 쓴다.
         """
         # emit_idx: push_frame과 동일하게 "이 세션에서 몇 번째로 처리된 프레임인가"를 뜻하는
         # 인덱스로 통일한다(단, 여기선 지연이 없으므로 원본 스트림 인덱스와 그대로 같다).
-        emit_idx = getattr(self, "_frame_3d_count", 0)
-        self._frame_3d_count = emit_idx + 1
-        return self._process_3d_frame(hip_centered_3d_frame, emit_idx)
+        samples = [hip_centered_3d_frame]
+        if timestamp is not None:
+            if not hasattr(self, "_pose_sampler"):
+                self._pose_sampler = PoseSampler()
+            samples = self._pose_sampler.push(hip_centered_3d_frame, timestamp)
+            if self._pose_sampler.discontinuity:
+                # Never bridge a tracking outage with a fabricated movement.
+                # Keep completed results, discard only the interrupted rep.
+                self.R_body = None
+                self.baseline_height = None
+                self._calib_buffer_3d = []
+                self.aligned_seq.clear()
+                self.pelvis_height_hist.clear()
+                self.emit_offset = None
+                self.state = "prep"
+                self.debounce_ctr = self.reversal_ctr = 0
+                self.rep_start_idx = None
+                self.phase_boundaries_running.clear()
+        status = None
+        completed = None
+        for i, sample in enumerate(samples):
+            emit_idx = getattr(self, "_frame_3d_count", 0)
+            self._frame_3d_count = emit_idx + 1
+            status = self._process_3d_frame(sample, emit_idx, feedback=i == len(samples)-1)
+            if status is not None:
+                status["sample_timestamp"] = self._pose_sampler.sample_timestamps[i] if timestamp is not None else None
+            if status and status.get("completed_rep") is not None:
+                completed = status["completed_rep"]
+        if completed is not None and status is not None:
+            status["completed_rep"] = completed
+            status["event"] = "rep_end"
+        return status
 
-    def _process_3d_frame(self, hip_centered_3d: np.ndarray, emit_idx: int) -> dict | None:
+    def _process_3d_frame(self, hip_centered_3d: np.ndarray, emit_idx: int, *, feedback: bool = True) -> dict | None:
         """push_frame/push_frame_3d 공통 처리: scale/orientation 캘리브레이션(1회) ->
         body-centered 정렬 -> phase 상태기계 -> partial/joint DTW -> 상태 dict 반환."""
         leg_len = float(leg_length_scale(hip_centered_3d[None])[0])
         if self.R_body is None:
+            if hasattr(self, "_pose_sampler"):
+                knee_angles = [float(_angle_deg(
+                    hip_centered_3d[_IDX[side + "Hip"]],
+                    hip_centered_3d[_IDX[side + "Knee"]],
+                    hip_centered_3d[_IDX[side + "Ankle"]],
+                )) for side in ("L", "R")]
+                if not np.isfinite(knee_angles).all() or min(knee_angles) < 150:
+                    self._calib_buffer_3d = []
+                    return {"status": "calibrating", "frame": emit_idx, "message": "일어서서 준비 자세를 유지해 주세요"}
             self._calib_buffer_3d = getattr(self, "_calib_buffer_3d", [])
             self._calib_buffer_3d.append((hip_centered_3d, leg_len))
             if len(self._calib_buffer_3d) >= self.calib_frames:
@@ -212,8 +261,8 @@ class OnlineSquatSession:
         velocity = self._causal_velocity()
         event = self._update_phase_state(t, velocity)
 
-        partial = self._partial_online_distance(t)
-        joint_feedback = self._joint_feedback_frame(t)
+        partial = self._partial_online_distance(t) if feedback else None
+        joint_feedback = self._joint_feedback_frame(t) if feedback else None
 
         return {
             "status": "ok",
@@ -315,17 +364,29 @@ class OnlineSquatSession:
         return max(0, t - self.emit_offset)
 
     def _finalize_rep(self, end_t: int) -> None:
-        start = self.rep_start_idx if self.rep_start_idx is not None else 0
+        # Include preparation in the classifier input. Starting at rep_start_idx
+        # (descent) clipped preparation to [0, 0], forcing every CNN call to fall
+        # back to DTW even when all five phases had actually been observed.
+        descent_start = self.rep_start_idx if self.rep_start_idx is not None else 0
+        start = max(self.emit_offset or 0, self.phase_boundaries_running.get("준비", [descent_start])[0])
         rep_coords = np.stack(self.aligned_seq[self._arr_idx(start) : self._arr_idx(end_t) + 1])
         feat = extract_all_features(rep_coords)
         bounds = {p: [max(0, s - start), max(0, e - start)] for p, (s, e) in self.phase_boundaries_running.items()}
+        if hasattr(self, "_pose_sampler"):
+            # The causal state machine detects completion, but its delayed
+            # transitions are not ground-truth phase boundaries. Once a rep is
+            # complete, use the same segmenter as the reference DB. Even an
+            # immediate reversal contains an observed lowest frame.
+            bounds = segment_phases(extract_phase_features(rep_coords)).as_dict()
         for p in PHASES:
             bounds.setdefault(p, [0, 0])
 
         per_class = {}
+        # All candidates must use the same metric for an argmin comparison.
+        # Class-specific weights changed the units/scale of each distance.
+        comparison_weights = resolve_weights(self.weights_cfg, self.weight_profile, class_label=None)
         for cls, medoids in self.db_operational.items():
-            w = resolve_weights(self.weights_cfg, self.weight_profile, class_label=cls)
-            per_class[cls] = multi_reference_distance(feat, bounds, medoids, w, self.weights_cfg, top_k=2)
+            per_class[cls] = multi_reference_distance(feat, bounds, medoids, comparison_weights, self.weights_cfg, top_k=2)
         dtw_pred = min(per_class, key=lambda c: per_class[c]["min_distance"])
 
         # 최종 클래스 판정: DL 모델이 있으면 그쪽이 담당(actor 5-fold 교차검증 기준
@@ -348,6 +409,12 @@ class OnlineSquatSession:
         # 해석 가능한 근거를 주지 못하므로.
         top_feat = sorted(per_class[pred]["best_detail"]["per_feature_contrib"].items(), key=lambda kv: -kv[1])[:3]
 
+        support = None
+        if hasattr(self, "_pose_sampler"):
+            if not hasattr(self, "_reference_support"):
+                self._reference_support = ReferenceSupport(self.db_operational, comparison_weights, self.weights_cfg)
+            support = self._reference_support.check(pred, per_class[pred]["min_distance"], bounds)
+
         result = RepResult(
             rep_index=len(self.completed_reps),
             frame_range=(start, end_t),
@@ -355,6 +422,17 @@ class OnlineSquatSession:
             raw_distance_by_class={c: per_class[c]["min_distance"] for c in per_class},
             score_vs_normal=score,
             top_contributing_features=top_feat,
+            classifier_source="dl" if dl_probs is not None else "dtw",
+            class_probabilities=(dict(zip(DL_CLASSES, map(float, dl_probs))) if dl_probs is not None else None),
+            phase_bounds=bounds,
+            angle_summary={
+                "knee_min_deg": (feat["knee_flexion_angle"].min(axis=0) * 180).tolist(),
+                "hip_min_deg": (feat["hip_flexion_angle"].min(axis=0) * 180).tolist(),
+                "torso_max_deg": float(feat["torso_inclination"].max() * 180),
+            },
+            assessment_supported=support is None or support["supported"],
+            assessment_note=("3D 추정 동작이 기준 데이터의 비교 범위를 벗어났습니다" if support and not support["supported"] else None),
+            reference_support=support,
         )
         self.completed_reps.append(result)
 
@@ -375,8 +453,8 @@ class OnlineSquatSession:
         from .dtw_compare import weighted_frame_cost_matrix
 
         out = {}
+        w = resolve_weights(self.weights_cfg, self.weight_profile, class_label=None)
         for cls, medoids in self.db_operational.items():
-            w = resolve_weights(self.weights_cfg, self.weight_profile, class_label=cls)
             best = None
             for med in medoids:
                 s, e = med["bounds"][phase_name]
