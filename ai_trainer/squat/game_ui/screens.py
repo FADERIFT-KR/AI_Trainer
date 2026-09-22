@@ -24,12 +24,12 @@ from PyQt5.QtWidgets import (
 )
 
 from ai_trainer.squat.camera_views import VIEW_FRONT, VIEW_LABEL_KO, VIEW_LEFT, VIEW_RIGHT
-from ai_trainer.core.camera_devices import discover_camera_devices
-from ai_trainer.core.common_skeleton import COMMON_BONE_COLORS_BGR, COMMON_BONE_INDEX_PAIRS
+from ai_trainer.core.s1_capture.camera_devices import discover_camera_devices
+from ai_trainer.core.s3_mapping.common_skeleton import COMMON_BONE_COLORS_BGR, COMMON_BONE_INDEX_PAIRS
 from ai_trainer.squat.joint_feedback import STATUS_BAD, STATUS_GOOD, STATUS_WARNING, JointScore, TRACKED_JOINTS
-from ai_trainer.core.live_pose.window import ImagePanel
-from ai_trainer.core.live_pose.worker import CameraConfig
-from ai_trainer.core.render import draw_skeleton_panel, fit_transform
+from ai_trainer.core.ui.window import ImagePanel
+from ai_trainer.core.s1_capture.camera_worker import CameraConfig
+from ai_trainer.core.ui.panel_render import draw_skeleton_panel, fit_transform
 from ai_trainer.squat.scoring import PASS_SCORE_THRESHOLD
 from ai_trainer.squat.session_decision import decide_session, format_session_decision
 

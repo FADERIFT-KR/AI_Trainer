@@ -5,7 +5,7 @@ import unittest
 
 import numpy as np
 
-from ai_trainer.core.common_skeleton import COMMON_JOINT_NAMES
+from ai_trainer.core.s3_mapping.common_skeleton import COMMON_JOINT_NAMES
 from scripts.analyze_recorded_session import occluded_display_jumps
 
 

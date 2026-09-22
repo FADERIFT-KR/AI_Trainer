@@ -10,7 +10,7 @@ from unittest.mock import patch
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from ai_trainer.core.camera_devices import CameraDevice, default_camera_index  # noqa: E402
+from ai_trainer.core.s1_capture.camera_devices import CameraDevice, default_camera_index  # noqa: E402
 
 
 class CameraDeviceTests(unittest.TestCase):

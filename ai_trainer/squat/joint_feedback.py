@@ -23,7 +23,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ai_trainer.core.common_skeleton import COMMON_JOINT_NAMES
+from ai_trainer.core.s3_mapping.common_skeleton import COMMON_JOINT_NAMES
 from ai_trainer.squat.camera_views import VIEW_FRONT, VIEW_LEFT, VIEW_RIGHT
 
 _TOLERANCE_CFG_PATH = Path(__file__).resolve().parents[2] / "configs" / "joint_angle_tolerance.json"

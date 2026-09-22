@@ -11,7 +11,7 @@ from __future__ import annotations
 import torch
 from torch import nn
 
-from ai_trainer.core.common_skeleton import COMMON_BONE_INDEX_PAIRS
+from ai_trainer.core.s3_mapping.common_skeleton import COMMON_BONE_INDEX_PAIRS
 
 
 TEMPORAL_WINDOW = 27

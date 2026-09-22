@@ -7,7 +7,7 @@ import numpy as np
 import torch
 from torch import nn
 
-from ai_trainer.core.common_skeleton import COMMON_BONE_INDEX_PAIRS, COMMON_JOINT_NAMES
+from ai_trainer.core.s3_mapping.common_skeleton import COMMON_BONE_INDEX_PAIRS, COMMON_JOINT_NAMES
 from ai_trainer.squat.two_stage_squat import ERROR_CLASSES, PARTS, T_REF, mask_occluded_joints
 
 

@@ -24,7 +24,7 @@ from typing import Mapping, Sequence
 import numpy as np
 
 from ai_trainer.squat.camera_views import VIEW_FRONT, VIEW_LEFT, VIEW_RIGHT, VIEWS
-from ai_trainer.core.common_skeleton import COMMON_JOINT_NAMES
+from ai_trainer.core.s3_mapping.common_skeleton import COMMON_JOINT_NAMES
 from ai_trainer.squat.skeleton_filter import SkeletonFilterConfig, SkeletonRefinementReport, refine_skeleton_sequence
 
 

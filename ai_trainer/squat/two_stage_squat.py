@@ -8,8 +8,8 @@ import numpy as np
 from scipy.spatial.distance import cdist
 
 from ai_trainer.squat.camera_views import VIEW_FRONT, VIEW_LEFT, VIEW_RIGHT, VIEWS
-from ai_trainer.core.common_skeleton import COMMON_JOINT_NAMES
-from ai_trainer.core.normalization import hip_center_3d, leg_length_scale
+from ai_trainer.core.s3_mapping.common_skeleton import COMMON_JOINT_NAMES
+from ai_trainer.core.s4_normalize.normalization import hip_center_3d, leg_length_scale
 
 T_REF = 64
 N_JOINTS = len(COMMON_JOINT_NAMES)

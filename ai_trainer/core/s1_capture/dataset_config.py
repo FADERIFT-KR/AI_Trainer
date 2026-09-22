@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 DATASET_PATH_ENV = "AI_TRAINER_DATASET_PATH"
-DEFAULT_DATASET_PATH = Path(__file__).resolve().parents[3] / "dataset"
+DEFAULT_DATASET_PATH = Path(__file__).resolve().parents[4] / "dataset"
 
 
 def get_dataset_path() -> Path:

@@ -17,8 +17,8 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from .core import ProcessedFrame
-from .worker import CameraConfig, CameraPoseWorker
+from ai_trainer.core.s2_pose.frame_processor import ProcessedFrame
+from ai_trainer.core.s1_capture.camera_worker import CameraConfig, CameraPoseWorker
 
 
 class ImagePanel(QLabel):

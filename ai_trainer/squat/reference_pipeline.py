@@ -19,10 +19,10 @@ import numpy as np
 import torch
 
 from ai_trainer.squat.aihub_zip import AiHubZip, SequenceKey
-from ai_trainer.core.common_skeleton import to_common_skeleton
+from ai_trainer.core.s3_mapping.common_skeleton import to_common_skeleton
 from ai_trainer.squat.lifting_dataset import CAMERA, WINDOW_T
 from ai_trainer.squat.lifting_model import TemporalLiftingNet
-from ai_trainer.core.normalization import (
+from ai_trainer.core.s4_normalize.normalization import (
     hip_center_3d,
     leg_length_scale,
     normalize_2d_sequence,

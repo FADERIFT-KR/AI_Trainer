@@ -35,13 +35,13 @@ import numpy as np
 import torch
 
 from ai_trainer.squat.camera_views import VIEW_FRONT, VIEW_LEFT, VIEW_RIGHT, VIEWS
-from ai_trainer.core.common_skeleton import COMMON_JOINT_NAMES
+from ai_trainer.core.s3_mapping.common_skeleton import COMMON_JOINT_NAMES
 from ai_trainer.squat.dl_classifier import CLASSES as DL_CLASSES
 from ai_trainer.squat.dl_classifier import DLSquatClassifier
 from ai_trainer.squat.dtw_compare import PHASES, multi_reference_distance, resolve_weights
 from ai_trainer.squat.features import extract_all_features
 from ai_trainer.squat.lifting_dataset import WINDOW_T
-from ai_trainer.core.normalization import body_axes, hip_center_3d, leg_length_scale
+from ai_trainer.core.s4_normalize.normalization import body_axes, hip_center_3d, leg_length_scale
 from ai_trainer.squat.mt_stgcn import SquatErrorDiagnoser
 from ai_trainer.squat.two_stage_squat import NormalTemplateGate, _cost_matrix, normalize_track
 

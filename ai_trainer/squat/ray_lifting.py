@@ -18,7 +18,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ai_trainer.core.camera_calibration import CameraCalibrationError, pixels_to_unit_rays
+from ai_trainer.core.s1_capture.camera_calibration import CameraCalibrationError, pixels_to_unit_rays
 from ai_trainer.squat.lifting_model import TemporalLiftingNet
 
 

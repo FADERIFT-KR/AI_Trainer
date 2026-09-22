@@ -13,9 +13,9 @@ import numpy as np  # noqa: E402
 
 from ai_trainer.squat.actor_split import load_air_squat_sequences  # noqa: E402
 from ai_trainer.squat.aihub_zip import AiHubZip, JOINT_NAMES  # noqa: E402
-from ai_trainer.core.common_skeleton import to_common_skeleton  # noqa: E402
-from ai_trainer.core.dataset_config import DATASET_PATH  # noqa: E402
-from ai_trainer.core.normalization import hip_center_3d, leg_length_scale, orientation_align_3d  # noqa: E402
+from ai_trainer.core.s3_mapping.common_skeleton import to_common_skeleton  # noqa: E402
+from ai_trainer.core.s1_capture.dataset_config import DATASET_PATH  # noqa: E402
+from ai_trainer.core.s4_normalize.normalization import hip_center_3d, leg_length_scale, orientation_align_3d  # noqa: E402
 from ai_trainer.squat.phase_features import extract_phase_features  # noqa: E402
 from ai_trainer.squat.phase_segmentation import segment_phases  # noqa: E402
 from ai_trainer.squat.skeleton_filter import SkeletonFilterConfig, refine_skeleton_sequence  # noqa: E402

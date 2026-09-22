@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from ai_trainer.core.common_skeleton import COMMON_JOINT_NAMES
+from ai_trainer.core.s3_mapping.common_skeleton import COMMON_JOINT_NAMES
 
 _IDX = {name: i for i, name in enumerate(COMMON_JOINT_NAMES)}
 _L_SHOULDER, _R_SHOULDER = _IDX["LShoulder"], _IDX["RShoulder"]

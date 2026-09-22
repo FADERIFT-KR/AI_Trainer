@@ -9,12 +9,13 @@ from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QImage, QPixmap
 from PyQt5.QtWidgets import QGridLayout, QLabel, QVBoxLayout, QWidget
 
-from ai_trainer.core.common_skeleton import COMMON_BONE_COLORS_BGR, COMMON_BONE_INDEX_PAIRS
-from ai_trainer.core.live_pose.render import POSE_CONNECTIONS
+from ai_trainer.core.s3_mapping.common_skeleton import COMMON_BONE_COLORS_BGR, COMMON_BONE_INDEX_PAIRS
+from ai_trainer.core.ui.pose_overlay import POSE_CONNECTIONS
 from ai_trainer.debug.stages import STAGES, StageDef, StageSnapshot
 
 DRAW_W, DRAW_H = 320, 230
 COLUMNS = 5
+ROWS = 1
 
 _BG = (22, 26, 34)
 _JOINT = (240, 240, 240)
@@ -42,6 +43,9 @@ class _StagePanel(QWidget):
         self.title.setStyleSheet("font-size: 13px; font-weight: 600; color: #ececec;")
         self.desc = QLabel(stage.description)
         self.desc.setStyleSheet("font-size: 11px; color: #95a0b2;")
+        self.package = QLabel(stage.package)
+        self.package.setStyleSheet(
+            "font-size: 10px; color: #6f7b8d; font-family: Menlo, Courier, monospace;")
         self.image = QLabel()
         self.image.setAlignment(Qt.AlignCenter)
         self.image.setMinimumSize(DRAW_W // 2, DRAW_H // 2)
@@ -53,6 +57,7 @@ class _StagePanel(QWidget):
         layout.setSpacing(2)
         layout.addWidget(self.title)
         layout.addWidget(self.desc)
+        layout.addWidget(self.package)
         layout.addWidget(self.image, stretch=1)
         layout.addWidget(self.footer)
         self.setStyleSheet("background: #10131a; border: 1px solid #262c38;")
@@ -152,7 +157,7 @@ class DebugWindow(QWidget):
         super().__init__()
         self.setWindowTitle("AI Trainer · 디버깅 — 스켈레톤 처리 공정")
         self.setStyleSheet("background: #0b0e14; color: #e6e6e6;")
-        self.resize(COLUMNS * (DRAW_W + 20) + 40, 2 * (DRAW_H + 80) + 70)
+        self.resize(COLUMNS * (DRAW_W + 20) + 40, ROWS * (DRAW_H + 100) + 70)
 
         self.header = QLabel("파이프라인 대기 중…")
         self.header.setStyleSheet("font-size: 13px; color: #aab4c4; padding: 4px 6px; font-family: Menlo, Courier, monospace;")
@@ -196,8 +201,6 @@ class DebugWindow(QWidget):
             bits.append("read %.1fms · mediapipe %.1fms · 나머지 %.1fms" % (t.get("read", 0), t.get("mediapipe", 0), t.get("rest", 0)))
         if "view" in meta:
             bits.append(f"시점 {meta['view']}")
-        if "filters" in meta:
-            bits.append(f"필터 {'OFF' if meta['filters'] == 'off' else 'ON'}")
         if meta.get("phase"):
             bits.append(f"phase {meta['phase']}")
         if meta.get("status"):

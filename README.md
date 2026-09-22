@@ -6,23 +6,38 @@
 
 ## 패키지 구조
 
-종목이 늘어나도 공통 기반을 재사용할 수 있도록 **core(뇌) + 종목별 모듈(몸)** 로 나눠 둡니다.
+`core/` 하위는 **스켈레톤이 처리되는 순서**대로 번호를 붙여 두었습니다. 디버깅 모드
+화면의 공정 번호와 폴더 번호가 1:1로 대응하므로, 화면에서 이상이 보인 단계의 폴더만
+열어보면 됩니다.
 
 ```
 ai_trainer/
-├── core/            # 종목 무관 공통 기반
-│   ├── live_pose/   # MediaPipe Pose(Task API) 웹캠 2D/3D 스켈레톤 추출
-│   ├── game_ui/     # 제너릭 UI 뼈대 (앱 셸, 포즈 브릿지, One-Euro 필터, 스파이크 가드)
-│   ├── camera_*.py  # 카메라 장치 선택 / 렌즈 보정
-│   └── common_skeleton.py, normalization.py, render.py, dataset_config.py
-└── squat/           # 스쿼트 종목 전용 판정 로직
-    ├── game_ui/     # 스쿼트 전용 화면 (3시점 촬영 → 비교/판정 → 결과)
-    ├── dtw_compare.py, online_dtw.py, two_stage_squat.py, mt_stgcn.py
-    ├── view_conditions.py, session_decision.py, phase_*.py
-    └── reference_*.py, aihub_zip.py, *_lifting*.py
+├── core/                  # 종목 무관 공통 기반 — 공정 순서대로 배열
+│   ├── s1_capture/        # 1. 카메라 입력: 장치 선택, 렌즈 왜곡 보정, 캡처 스레드
+│   ├── s2_pose/           # 2. MediaPipe 추정: 33관절 2D + 3D(world landmarks)
+│   ├── s3_mapping/        # 3. Common Skeleton 매핑: 33 -> 18관절, 저신뢰 관절 freeze
+│   ├── s4_normalize/      # 4. 정렬·정규화: 몸 방향 회전 + 다리길이 스케일
+│   └── ui/                # 화면 표시 전용 (좌표를 바꾸지 않음)
+├── squat/                 # 스쿼트 종목 전용 판정 (DTW, 2단계 분류기, 시점별 조건)
+└── debug/                 # 디버깅 모드: 공정별 스켈레톤 시각화
 ```
 
-앞으로 푸쉬업·요가 등을 추가할 때는 `ai_trainer/squat/`과 같은 레벨에 새 서브패키지를 만들고, 마찬가지로 `ai_trainer.core`를 그대로 재사용합니다.
+앞으로 푸쉬업·요가 등을 추가할 때는 `ai_trainer/squat/`과 같은 레벨에 새 서브패키지를
+만들고, 마찬가지로 `ai_trainer.core`를 그대로 재사용합니다.
+
+### 실시간 경로에 시간축 필터를 두지 않습니다
+
+One-Euro 필터, 스파이크 가드, 다리길이 안정화, 표시용 기하 보정은 제거했습니다.
+MediaPipe 추정값이 `s3_mapping`을 거쳐 그대로 판정과 화면에 쓰입니다. 화면에 보이는
+스켈레톤과 판정이 받는 좌표가 같으므로, 눈에 보이는 문제가 곧 판정이 받는 문제입니다.
+
+## 실행
+
+```bash
+python scripts/run_game.py            # 사용자/디버깅 모드 선택 창
+python scripts/run_game.py --user     # 사용자 모드
+python scripts/run_game.py --debug    # 디버깅 모드 (공정별 스켈레톤 창 추가)
+```
 
 ## 통합 게임 UI 실행
 

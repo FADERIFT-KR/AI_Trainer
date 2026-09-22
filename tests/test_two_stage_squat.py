@@ -7,7 +7,7 @@ import numpy as np
 import torch
 
 from ai_trainer.squat.camera_views import VIEW_LEFT, VIEW_RIGHT
-from ai_trainer.core.common_skeleton import COMMON_JOINT_NAMES
+from ai_trainer.core.s3_mapping.common_skeleton import COMMON_JOINT_NAMES
 from ai_trainer.squat.joint_feedback import compute_joint_scores, visible_joint_scores
 from ai_trainer.squat.mt_stgcn import MultiTaskSTGCN, SquatErrorDiagnoser, adjacency_matrix
 from ai_trainer.squat.online_dtw import OnlineSquatSession

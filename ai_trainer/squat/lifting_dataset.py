@@ -20,8 +20,8 @@ import numpy as np
 
 from ai_trainer.squat.actor_split import load_air_squat_sequences
 from ai_trainer.squat.aihub_zip import AiHubZip, SequenceKey
-from ai_trainer.core.common_skeleton import to_common_skeleton
-from ai_trainer.core.normalization import hip_center_3d, normalize_2d_sequence
+from ai_trainer.core.s3_mapping.common_skeleton import to_common_skeleton
+from ai_trainer.core.s4_normalize.normalization import hip_center_3d, normalize_2d_sequence
 
 CAMERA = 1  # 정면 후보 (claude.md 7장: 다중 조건 검증으로 강하게 추정되는 카메라, GT 아님)
 WINDOW_T = 9

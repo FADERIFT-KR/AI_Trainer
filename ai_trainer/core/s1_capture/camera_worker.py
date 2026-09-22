@@ -9,10 +9,10 @@ from pathlib import Path
 
 from PyQt5.QtCore import QThread, pyqtSignal
 
-from ai_trainer.core.camera_devices import default_camera_index
+from ai_trainer.core.s1_capture.camera_devices import default_camera_index
 
-from .core import FrameProcessor
-from .mediapipe_pose import MediaPipePoseDetector, PoseBackendError
+from ai_trainer.core.s2_pose.frame_processor import FrameProcessor
+from ai_trainer.core.s2_pose.mediapipe_pose import MediaPipePoseDetector, PoseBackendError
 
 
 def _default_camera_index() -> int:
@@ -114,7 +114,7 @@ class CameraPoseWorker(QThread):
                 min_presence_confidence=self.config.confidence,
                 min_tracking_confidence=self.config.confidence,
             )
-            from ai_trainer.core.camera_calibration import (
+            from ai_trainer.core.s1_capture.camera_calibration import (
                 CameraCalibration,
                 CameraCalibrationError,
                 FrameUndistorter,

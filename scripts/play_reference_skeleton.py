@@ -37,9 +37,9 @@ import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 
 from ai_trainer.squat.aihub_zip import AiHubZip  # noqa: E402
-from ai_trainer.core.common_skeleton import COMMON_BONE_COLORS_BGR, COMMON_BONE_INDEX_PAIRS  # noqa: E402
+from ai_trainer.core.s3_mapping.common_skeleton import COMMON_BONE_COLORS_BGR, COMMON_BONE_INDEX_PAIRS  # noqa: E402
 from ai_trainer.squat.game_ui.reference_track import medoid_rank_from_entry  # noqa: E402
-from ai_trainer.core.render import draw_skeleton_panel, fit_transform  # noqa: E402
+from ai_trainer.core.ui.panel_render import draw_skeleton_panel, fit_transform  # noqa: E402
 from ai_trainer.squat.reference_pipeline import build_ground_truth_reference  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent

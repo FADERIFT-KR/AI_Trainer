@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import numpy as np  # noqa: E402
 import torch  # noqa: E402
 
-from ai_trainer.core.common_skeleton import COMMON_JOINT_NAMES  # noqa: E402
+from ai_trainer.core.s3_mapping.common_skeleton import COMMON_JOINT_NAMES  # noqa: E402
 from ai_trainer.squat.lifting_model import TemporalLiftingNet  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent

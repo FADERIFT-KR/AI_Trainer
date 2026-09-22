@@ -16,13 +16,13 @@ import cv2
 import numpy as np
 
 from ai_trainer.squat.camera_views import VIEW_LABEL_KO, VIEWS
-from ai_trainer.core.common_skeleton import (
+from ai_trainer.core.s3_mapping.common_skeleton import (
     COMMON_BONE_COLORS_BGR,
     COMMON_BONE_INDEX_PAIRS,
     COMMON_JOINT_NAMES,
 )
 from ai_trainer.squat.multiview_fusion import fuse_recorded_views
-from ai_trainer.core.render import TransformFn, draw_skeleton_panel
+from ai_trainer.core.ui.panel_render import TransformFn, draw_skeleton_panel
 
 from ai_trainer.squat.game_ui.error_explain import ERROR_EXPLANATIONS
 

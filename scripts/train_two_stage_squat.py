@@ -21,7 +21,7 @@ from torch import nn  # noqa: E402
 
 from ai_trainer.squat.actor_split import load_air_squat_sequences  # noqa: E402
 from ai_trainer.squat.aihub_zip import AiHubZip  # noqa: E402
-from ai_trainer.core.dataset_config import DATASET_PATH  # noqa: E402
+from ai_trainer.core.s1_capture.dataset_config import DATASET_PATH  # noqa: E402
 from ai_trainer.squat.lifting_dataset import load_actor_split  # noqa: E402
 from ai_trainer.squat.mt_stgcn import MultiTaskSTGCN  # noqa: E402
 from ai_trainer.squat.reference_pipeline import build_ground_truth_reference  # noqa: E402

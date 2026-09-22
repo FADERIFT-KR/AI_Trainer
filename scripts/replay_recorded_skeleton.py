@@ -1,10 +1,12 @@
-"""Render saved camera frames beside recorded and corrected 3D skeletons.
+"""Render saved camera frames beside recorded and recomputed 3D skeletons.
 
 Example:
     python scripts/replay_recorded_skeleton.py SESSION_DIR --view right --output output/right_corrected.mp4
 
 This reuses recorded MediaPipe landmarks, so it tests the tracking/framing
-changes without a live camera or rerunning the pose model. The original saved
+changes without a live camera or rerunning the pose model. The left skeleton is
+recomputed from the saved landmarks through the current bridge, so it shows what
+today's code produces for a session recorded earlier. The original saved
 video and JSONL remain untouched.
 """
 from __future__ import annotations
@@ -20,11 +22,10 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from ai_trainer.squat.camera_views import VIEWS
-from ai_trainer.core.common_skeleton import COMMON_BONE_COLORS_BGR, COMMON_BONE_INDEX_PAIRS
+from ai_trainer.core.s3_mapping.common_skeleton import COMMON_BONE_COLORS_BGR, COMMON_BONE_INDEX_PAIRS
 from ai_trainer.squat.game_ui.framing_check import check_framing
-from ai_trainer.squat.game_ui.display_skeleton import ImageGuidedSkeletonDisplay
-from ai_trainer.core.game_ui.pose_bridge import CommonSkeleton3DBridge, CommonSkeletonBridge
-from ai_trainer.core.render import draw_skeleton_panel, fit_transform
+from ai_trainer.core.s3_mapping.pose_bridge import CommonSkeleton3DBridge
+from ai_trainer.core.ui.panel_render import draw_skeleton_panel, fit_transform
 
 
 PANEL_SIZE = 420
@@ -79,22 +80,14 @@ def replay(directory: Path, view: str, output: Path) -> dict:
         raise ValueError("영상과 프레임 기록의 길이가 다릅니다")
     width, height = metadata["frame_size"]
     alignment = _calibration_matrix(rows)
-    bridge = CommonSkeleton3DBridge(stabilize_feet=True)
-    image_bridge = CommonSkeletonBridge()
-    display_corrector = ImageGuidedSkeletonDisplay(view)
+    bridge = CommonSkeleton3DBridge()
     corrected = []
     for row in rows:
         if row.get("world_landmarks") is None or row.get("image_landmarks") is None:
             corrected.append(None)
             continue
-        common_2d, _, _ = image_bridge.update(
-            np.asarray(row["image_landmarks"], dtype=float), width, height
-        )
         common, _, _ = bridge.update(np.asarray(row["world_landmarks"], dtype=float))
-        corrected.append(_project(display_corrector.update(
-            common_2d, common @ alignment,
-            np.asarray(row["world_landmarks"], dtype=float),
-        ), view))
+        corrected.append(_project(common @ alignment, view))
     original = [_project(np.asarray(row["aligned_3d"], dtype=float), view)
                 if row.get("aligned_3d") is not None else None for row in rows]
     all_points = [points for points in corrected + original if points is not None]
@@ -144,7 +137,7 @@ def replay(directory: Path, view: str, output: Path) -> dict:
                         (70, 240, 70) if effective_gate else (70, 70, 240), 2)
             frame_out = np.hstack((camera,
                                    _panel(original[index], transform, "Saved analysis"),
-                                   _panel(corrected[index], transform, "Corrected display")))
+                                   _panel(corrected[index], transform, "Recomputed (current code)")))
             writer.write(frame_out)
     finally:
         capture.release()

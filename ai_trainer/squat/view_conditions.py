@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 
 from ai_trainer.squat.camera_views import VIEW_FRONT, VIEW_LEFT, VIEW_RIGHT, VIEWS
-from ai_trainer.core.common_skeleton import COMMON_JOINT_NAMES
+from ai_trainer.core.s3_mapping.common_skeleton import COMMON_JOINT_NAMES
 
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[2] / "configs" / "view_condition_thresholds.json"
 PHASES = ("준비", "하강", "최저점", "상승", "종료")

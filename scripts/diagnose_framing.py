@@ -34,8 +34,8 @@ from ai_trainer.squat.game_ui.framing_check import (  # noqa: E402
     MIN_BODY_HEIGHT_RATIO,
     check_framing,
 )
-from ai_trainer.core.live_pose.mediapipe_pose import MediaPipePoseDetector  # noqa: E402
-from ai_trainer.core.live_pose.worker import CameraConfig, _open_camera  # noqa: E402
+from ai_trainer.core.s2_pose.mediapipe_pose import MediaPipePoseDetector  # noqa: E402
+from ai_trainer.core.s1_capture.camera_worker import CameraConfig, _open_camera  # noqa: E402
 
 DEFAULT_MODEL_PATH = Path(__file__).resolve().parent.parent / "models" / "pose_landmarker_full.task"
 

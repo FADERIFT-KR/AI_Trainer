@@ -10,7 +10,7 @@ from typing import Any
 
 import numpy as np
 
-from .core import PoseObservation, landmarks_to_array
+from ai_trainer.core.s2_pose.frame_processor import PoseObservation, landmarks_to_array
 
 
 class PoseBackendError(RuntimeError):

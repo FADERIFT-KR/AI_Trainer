@@ -29,7 +29,7 @@ import torch.nn as nn  # noqa: E402
 
 from ai_trainer.squat.actor_split import load_air_squat_sequences  # noqa: E402
 from ai_trainer.squat.aihub_zip import AiHubZip  # noqa: E402
-from ai_trainer.core.dataset_config import DATASET_PATH  # noqa: E402
+from ai_trainer.core.s1_capture.dataset_config import DATASET_PATH  # noqa: E402
 from ai_trainer.squat.dl_classifier import CLASSES, PHASES, SmallSquatCNN, build_fixed_vector  # noqa: E402
 from ai_trainer.squat.features import extract_all_features  # noqa: E402
 from ai_trainer.squat.lifting_dataset import load_actor_split  # noqa: E402

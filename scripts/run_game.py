@@ -27,8 +27,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from PyQt5.QtCore import Qt  # noqa: E402
 from PyQt5.QtWidgets import QApplication  # noqa: E402
 
-from ai_trainer.core.game_ui.app import GameWindow  # noqa: E402
-from ai_trainer.core.game_ui.mode_dialog import MODE_DEBUG, MODE_USER, choose_mode  # noqa: E402
+from ai_trainer.core.ui.app import GameWindow  # noqa: E402
+from ai_trainer.core.ui.mode_dialog import MODE_DEBUG, MODE_USER, choose_mode  # noqa: E402
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:

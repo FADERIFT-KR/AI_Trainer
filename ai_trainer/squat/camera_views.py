@@ -21,7 +21,7 @@ from typing import Iterable
 import numpy as np
 
 from ai_trainer.squat.aihub_zip import AiHubZip, JOINT_NAMES, SequenceKey
-from ai_trainer.core.camera_id import evaluate_frame, sample_frame_indices
+from ai_trainer.core.s1_capture.camera_id import evaluate_frame, sample_frame_indices
 
 VIEW_FRONT = "front"
 VIEW_LEFT = "left"

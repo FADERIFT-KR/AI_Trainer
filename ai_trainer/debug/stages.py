@@ -1,4 +1,8 @@
-"""스켈레톤 처리 공정 정의 + 워커→디버그 창 스냅샷 전달."""
+"""스켈레톤 처리 공정 정의 + 워커→디버그 창 스냅샷 전달.
+
+여기 나열된 순서가 곧 `ai_trainer/core/` 하위 패키지 순서(s1_capture … s4_normalize)다.
+공정을 추가/변경하면 두 곳을 같이 고쳐야 한다.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -10,7 +14,7 @@ from PyQt5.QtCore import QObject, pyqtSignal
 #   image   — (H,W,3) BGR 이미지 자체 (이미 스켈레톤이 그려진 카메라 프레임)
 #   px2d    — (J,2) 픽셀 좌표, frame_size 기준
 #   mp3d    — (33,3) MediaPipe world 좌표(미터, y 아래 방향)
-#   m3d     — (18,3) Common 3D(미터, y 아래 방향, hip 근처 원점)
+#   m3d     — (18,3) Common 3D(미터, y 아래 방향, hip 원점)
 #   norm3d  — (18,3) 방향 정렬 + 다리길이 정규화 좌표(y 위 방향, hip 원점)
 @dataclass(frozen=True)
 class StageDef:
@@ -19,19 +23,20 @@ class StageDef:
     description: str
     kind: str
     unit: str
+    package: str
 
 
 STAGES: tuple[StageDef, ...] = (
-    StageDef("mp_image_2d", "MediaPipe 2D", "카메라 프레임 위 33관절 원본 추정", "image", "px"),
-    StageDef("mp_world_3d", "MediaPipe 3D 원본", "world_landmarks 33관절 (미터)", "mp3d", "m"),
-    StageDef("common2d_raw", "Common 2D 매핑", "33→18관절 픽셀 좌표, 필터 전", "px2d", "px"),
-    StageDef("common2d_filtered", "2D One-Euro 후", "화면 오버레이용 2D (common2d)", "px2d", "px"),
-    StageDef("common3d_raw", "Common 3D 매핑", "33→18관절 3D, 필터 전", "m3d", "m"),
-    StageDef("common3d_spike", "스파이크 가드 후", "Live3DSpikeGuard 통과", "m3d", "m"),
-    StageDef("common3d_smooth", "One-Euro 후 · 판정 입력", "hip 원점 재중심화 (common3d)", "m3d", "m"),
-    StageDef("analysis_aligned", "정렬·정규화 · 판정용", "R_body 회전 + 다리길이 스케일", "norm3d", "L"),
-    StageDef("display_aligned_pre", "표시용 정렬", "stabilize_feet 브릿지 → 정렬", "norm3d", "L"),
-    StageDef("final_display", "최종 화면 스켈레톤", "ImageGuided 보정 후 출력", "norm3d", "L"),
+    StageDef("s1_capture", "카메라 입력", "왜곡 보정 후 프레임 + 33관절 2D",
+             "image", "px", "core/s1_capture"),
+    StageDef("s2_pose_3d", "MediaPipe 3D 추정", "world_landmarks 33관절 (미터)",
+             "mp3d", "m", "core/s2_pose"),
+    StageDef("s3_common_2d", "Common 2D 매핑", "33→18관절 픽셀 좌표 (화면 오버레이용)",
+             "px2d", "px", "core/s3_mapping"),
+    StageDef("s3_common_3d", "Common 3D 매핑", "33→18관절 3D, hip 원점 재중심화",
+             "m3d", "m", "core/s3_mapping"),
+    StageDef("s4_normalized", "정렬·정규화 · 판정 입력", "R_body 회전 + 다리길이 스케일",
+             "norm3d", "L", "core/s4_normalize"),
 )
 
 STAGE_BY_ID = {s.id: s for s in STAGES}

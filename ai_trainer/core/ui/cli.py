@@ -35,7 +35,7 @@ def main(
     root = (
         Path(project_root).resolve()
         if project_root is not None
-        else Path(__file__).resolve().parents[4]
+        else Path(__file__).resolve().parents[3]
     )
     model_path = args.model if args.model.is_absolute() else root / args.model
     model_path = model_path.resolve()

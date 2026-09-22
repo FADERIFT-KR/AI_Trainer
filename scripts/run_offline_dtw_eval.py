@@ -23,7 +23,7 @@ import torch  # noqa: E402
 
 from ai_trainer.squat.actor_split import load_air_squat_sequences  # noqa: E402
 from ai_trainer.squat.aihub_zip import AiHubZip  # noqa: E402
-from ai_trainer.core.dataset_config import DATASET_PATH  # noqa: E402
+from ai_trainer.core.s1_capture.dataset_config import DATASET_PATH  # noqa: E402
 from ai_trainer.squat.dtw_compare import PHASES, multi_reference_distance, resolve_weights  # noqa: E402
 from ai_trainer.squat.features import extract_all_features  # noqa: E402
 from ai_trainer.squat.lifting_dataset import load_actor_split  # noqa: E402

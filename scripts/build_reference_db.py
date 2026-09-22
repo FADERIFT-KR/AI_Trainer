@@ -30,7 +30,7 @@ from ai_trainer.squat.lifting_model import TemporalLiftingNet  # noqa: E402
 from ai_trainer.squat.phase_features import extract_phase_features  # noqa: E402
 from ai_trainer.squat.phase_segmentation import segment_phases  # noqa: E402
 from ai_trainer.squat.reference_pipeline import build_ground_truth_reference, build_operational_reference  # noqa: E402
-from ai_trainer.core.dataset_config import DATASET_PATH  # noqa: E402
+from ai_trainer.core.s1_capture.dataset_config import DATASET_PATH  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 SPLIT_PATH = ROOT / "configs" / "actor_split.json"

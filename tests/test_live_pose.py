@@ -20,8 +20,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from ai_trainer.core.live_pose.core import FrameProcessor, PoseObservation, landmarks_to_array
-from ai_trainer.core.live_pose.render import render_3d_pose
+from ai_trainer.core.s2_pose.frame_processor import FrameProcessor, PoseObservation, landmarks_to_array
+from ai_trainer.core.ui.pose_overlay import render_3d_pose
 from scripts.download_pose_model import DEFAULT_OUTPUT, _valid_model
 
 
@@ -96,11 +96,11 @@ class FrameProcessorTests(unittest.TestCase):
         # test independent of OpenCV and verifies processor orchestration.
         with (
             patch(
-                "ai_trainer.core.live_pose.core.draw_2d_pose",
+                "ai_trainer.core.s2_pose.frame_processor.draw_2d_pose",
                 side_effect=lambda frame, points: frame.copy(),
             ) as draw_2d,
             patch(
-                "ai_trainer.core.live_pose.core.render_3d_pose",
+                "ai_trainer.core.s2_pose.frame_processor.render_3d_pose",
                 return_value=skeleton,
             ) as draw_3d,
         ):
@@ -127,7 +127,7 @@ class FrameProcessorTests(unittest.TestCase):
             return corrected
 
         processor = FrameProcessor(detector, mirror=True, frame_preprocessor=preprocessor)
-        with patch("ai_trainer.core.live_pose.core.render_3d_pose", return_value=np.zeros((64, 64, 3), dtype=np.uint8)):
+        with patch("ai_trainer.core.s2_pose.frame_processor.render_3d_pose", return_value=np.zeros((64, 64, 3), dtype=np.uint8)):
             processed = processor.process(input_frame)
 
         expected_bgr = preprocessor(input_frame)[:, ::-1]

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ai_trainer.core.common_skeleton import COMMON_JOINT_NAMES
+from ai_trainer.core.s3_mapping.common_skeleton import COMMON_JOINT_NAMES
 from ai_trainer.squat.game_ui.post_session_replay import annotate_replay_frame, build_replay_views, error_joints
 
 

@@ -31,8 +31,8 @@ import numpy as np  # noqa: E402
 
 from ai_trainer.squat.actor_split import load_air_squat_sequences  # noqa: E402
 from ai_trainer.squat.aihub_zip import AiHubZip  # noqa: E402
-from ai_trainer.core.dataset_config import DATASET_PATH  # noqa: E402
-from ai_trainer.core.common_skeleton import COMMON_JOINT_NAMES  # noqa: E402
+from ai_trainer.core.s1_capture.dataset_config import DATASET_PATH  # noqa: E402
+from ai_trainer.core.s3_mapping.common_skeleton import COMMON_JOINT_NAMES  # noqa: E402
 from ai_trainer.squat.joint_feedback import TRACKED_JOINTS, _angle_deg  # noqa: E402
 from ai_trainer.squat.lifting_dataset import load_actor_split  # noqa: E402
 from ai_trainer.squat.phase_features import extract_phase_features  # noqa: E402

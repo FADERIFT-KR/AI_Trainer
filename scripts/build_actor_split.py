@@ -14,7 +14,7 @@ from ai_trainer.squat.actor_split import (  # noqa: E402
     save_split,
     summarize_split,
 )
-from ai_trainer.core.dataset_config import DATASET_PATH  # noqa: E402
+from ai_trainer.core.s1_capture.dataset_config import DATASET_PATH  # noqa: E402
 
 OUT_PATH = Path(__file__).resolve().parent.parent / "configs" / "actor_split.json"
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
-from ai_trainer.core.common_skeleton import COMMON_JOINT_NAMES
+from ai_trainer.core.s3_mapping.common_skeleton import COMMON_JOINT_NAMES
 from ai_trainer.squat.joint_feedback import STATUS_BAD, STATUS_GOOD, STATUS_WARNING, JointScore
 
 _IDX = {name: i for i, name in enumerate(COMMON_JOINT_NAMES)}

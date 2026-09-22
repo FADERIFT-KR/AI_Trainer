@@ -7,7 +7,7 @@ from typing import Any, Callable, Protocol
 
 import numpy as np
 
-from .render import draw_2d_pose, render_3d_pose
+from ai_trainer.core.ui.pose_overlay import draw_2d_pose, render_3d_pose
 
 
 LANDMARK_COLUMNS = 4

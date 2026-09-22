@@ -20,7 +20,7 @@ import numpy as np
 import torch
 from PyQt5.QtCore import QThread, pyqtSignal
 
-from ai_trainer.core.camera_calibration import (
+from ai_trainer.core.s1_capture.camera_calibration import (
     CameraCalibration,
     CameraCalibrationError,
     FrameUndistorter,
@@ -32,16 +32,15 @@ from ai_trainer.squat.dl_classifier import DLSquatClassifier
 from ai_trainer.squat.mt_stgcn import SquatErrorDiagnoser
 from ai_trainer.squat.two_stage_squat import NormalTemplateGate
 from ai_trainer.squat.joint_feedback import JointScore, compute_joint_scores, visible_joint_scores
-from ai_trainer.core.live_pose.mediapipe_pose import MediaPipePoseDetector, PoseBackendError
-from ai_trainer.core.live_pose.render import draw_2d_pose
-from ai_trainer.core.live_pose.worker import CameraConfig, _open_camera
+from ai_trainer.core.s2_pose.mediapipe_pose import MediaPipePoseDetector, PoseBackendError
+from ai_trainer.core.ui.pose_overlay import draw_2d_pose
+from ai_trainer.core.s1_capture.camera_worker import CameraConfig, _open_camera
 from ai_trainer.squat.lifting_model import TemporalLiftingNet
 from ai_trainer.squat.online_dtw import OnlineSquatSession
 from ai_trainer.squat.reference_db_io import load_reference_db
 from ai_trainer.squat.scoring import PASS_SCORE_THRESHOLD, distance_to_score
 from ai_trainer.squat.view_conditions import assess_view_rep, load_view_condition_config
 
-from ai_trainer.squat.game_ui.display_skeleton import ImageGuidedSkeletonDisplay
 from ai_trainer.squat.game_ui.framing_check import (
     check_framing,
     guide_box as compute_guide_box,
@@ -195,14 +194,10 @@ class SquatPipelineWorker(QThread):
                 view_mode=self.view_mode,
             )
 
-            from ai_trainer.core.game_ui.pose_bridge import CommonSkeleton3DBridge, CommonSkeletonBridge
+            from ai_trainer.core.s3_mapping.pose_bridge import CommonSkeleton3DBridge, CommonSkeletonBridge
 
             bridge = CommonSkeletonBridge(min_visibility=self.config.confidence)
             bridge3d = CommonSkeleton3DBridge(min_visibility=self.config.confidence)
-            display_bridge3d = CommonSkeleton3DBridge(
-                min_visibility=self.config.confidence, stabilize_feet=True
-            )
-            display_corrector = ImageGuidedSkeletonDisplay(self.view_mode)
             common2d_history: list[np.ndarray] = []
             try:
                 view_condition_config = load_view_condition_config()
@@ -247,10 +242,6 @@ class SquatPipelineWorker(QThread):
             smoothed_fps = 0.0
             consecutive_failures = 0
             tap = self.debug_tap
-            no_filter = os.environ.get("AI_TRAINER_NO_FILTER") == "1"
-            if tap is not None:
-                bridge.trace = {}
-                bridge3d.trace = {}
             timing = {"read": 0.0, "mediapipe": 0.0, "rest": 0.0}
             loop_start_prev = None
             t_read = t_mp = 0.0
@@ -304,7 +295,6 @@ class SquatPipelineWorker(QThread):
                 analysis_aligned_frame = None
                 common2d = None
                 common3d = None
-                display_common3d = None
                 frozen3d = None
                 analysis_status = None
                 camera_rays = None
@@ -356,20 +346,16 @@ class SquatPipelineWorker(QThread):
                     # 멈추면 마지막 자세가 화면에 남고 복귀할 때 관절이 튄다.
                     common2d, frozen_mask, mean_conf = bridge.update(observation.image_landmarks, w, h)
                     common3d, frozen3d, _mean_conf3d = bridge3d.update(observation.world_landmarks)
-                    display_common3d, _, _ = display_bridge3d.update(observation.world_landmarks)
                     n_frozen = int(frozen_mask.sum())
 
                     if tap is not None:
                         thumb_w = 320
                         thumb = cv2.resize(display_bgr, (thumb_w, max(1, int(thumb_w * h / w))))
-                        tap.put("mp_image_2d", draw_2d_pose(thumb, observation.image_landmarks),
+                        tap.put("s1_capture", draw_2d_pose(thumb, observation.image_landmarks),
                                 note=f"평균 신뢰도 {mean_conf:.2f}")
-                        tap.put("mp_world_3d", observation.world_landmarks[:, :3])
-                        tap.put("common2d_raw", bridge.trace.get("raw"), frame_size=(w, h))
-                        tap.put("common2d_filtered", common2d, note=f"freeze {n_frozen}", frame_size=(w, h))
-                        tap.put("common3d_raw", bridge3d.trace.get("raw"))
-                        tap.put("common3d_spike", bridge3d.trace.get("after_spike"))
-                        tap.put("common3d_smooth", common3d, note=f"freeze {int(frozen3d.sum())}")
+                        tap.put("s2_pose_3d", observation.world_landmarks[:, :3])
+                        tap.put("s3_common_2d", common2d, note=f"freeze {n_frozen}", frame_size=(w, h))
+                        tap.put("s3_common_3d", common3d, note=f"freeze {int(frozen3d.sum())}")
 
                     # Keep calibrated ray features in recordings for a future
                     # paired webcam 2D/3D lifting evaluation.  They are not fed
@@ -464,22 +450,15 @@ class SquatPipelineWorker(QThread):
                     video_bgr = display_bgr.copy()
                     cv2.rectangle(video_bgr, (gbox[0], gbox[1]), (gbox[2], gbox[3]), (60, 60, 240), 2)
 
-                if (display_common3d is not None and session.R_body is not None
+                if (common3d is not None and session.R_body is not None
                         and session.scale3d is not None):
                     aligned_frame = np.einsum(
-                        "ij,pj->pi", session.R_body.T, display_common3d / session.scale3d
-                    )
-                aligned_frame_pre_display = aligned_frame
-                if common2d is not None and not no_filter:
-                    aligned_frame = display_corrector.update(
-                        common2d, aligned_frame,
-                        observation.world_landmarks if observation is not None else None,
+                        "ij,pj->pi", session.R_body.T, common3d / session.scale3d
                     )
 
                 if tap is not None:
                     if not pose_found:
-                        for stage_id in ("mp_image_2d", "mp_world_3d", "common2d_raw", "common2d_filtered",
-                                         "common3d_raw", "common3d_spike", "common3d_smooth"):
+                        for stage_id in ("s1_capture", "s2_pose_3d", "s3_common_2d", "s3_common_3d"):
                             tap.put(stage_id, None, note="사람 미검출")
                     if analysis_aligned_frame is None:
                         if not self.session_active:
@@ -490,17 +469,13 @@ class SquatPipelineWorker(QThread):
                             wait_note = "준비 자세 캘리브레이션 중"
                         else:
                             wait_note = "판정 프레임 없음"
-                        tap.put("analysis_aligned", None, note=wait_note)
+                        tap.put("s4_normalized", None, note=wait_note)
                     else:
-                        tap.put("analysis_aligned", analysis_aligned_frame)
-                    calib_note = "" if session.R_body is not None else "캘리브레이션 전"
-                    tap.put("display_aligned_pre", aligned_frame_pre_display, note=calib_note)
-                    tap.put("final_display", aligned_frame, note=calib_note)
+                        tap.put("s4_normalized", analysis_aligned_frame)
                     tap.meta(
                         fps=smoothed_fps,
                         timing=dict(timing),
                         view=self.view_mode,
-                        filters="off" if no_filter else "on",
                         phase=phase,
                         status=None if framing_ok else framing_message,
                     )
@@ -541,7 +516,6 @@ class SquatPipelineWorker(QThread):
                         "world_landmarks": observation.world_landmarks if observation is not None else None,
                         "common_2d": common2d,
                         "common_3d": common3d,
-                        "display_common_3d": display_common3d,
                         "frozen_3d": frozen3d,
                         "aligned_3d": analysis_aligned_frame,
                         "display_aligned_3d": aligned_frame,
