@@ -13,12 +13,17 @@ import zipfile
 from pathlib import Path
 
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from ai_trainer.runtime_paths import default_model_path
+
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MODEL_URL = (
     "https://storage.googleapis.com/mediapipe-models/pose_landmarker/"
     "pose_landmarker_lite/float16/1/pose_landmarker_lite.task"
 )
-DEFAULT_OUTPUT = PROJECT_ROOT / "models" / "pose_landmarker_lite.task"
+DEFAULT_OUTPUT = default_model_path(PROJECT_ROOT)
 MINIMUM_MODEL_BYTES = 1_000_000
 MODEL_SHA256 = "59929e1d1ee95287735ddd833b19cf4ac46d29bc7afddbbf6753c459690d574a"
 

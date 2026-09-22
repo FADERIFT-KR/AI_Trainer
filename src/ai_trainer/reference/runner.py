@@ -5,6 +5,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from ai_trainer.runtime_paths import configured_dataset_path, reference_output_dir
+
 from .cli import main as build_main
 from .demo import create_demo_preview
 
@@ -37,15 +39,21 @@ def main(
             return 0
         return build_main(arguments)
 
-    input_root = root / "data" / "raw" / "aihub_crossfit"
+    selected_dataset = configured_dataset_path()
+    input_root = selected_dataset or root / "data" / "raw" / "aihub_crossfit"
     if _has_downloaded_sources(input_root):
         print(f"AI Hub source files detected: {input_root}")
+        output_root = (
+            reference_output_dir()
+            if selected_dataset is not None
+            else root / "data" / "reference" / "air_squat"
+        )
         return build_main(
             [
                 "--input",
                 str(input_root),
                 "--output",
-                str(root / "data" / "reference" / "air_squat"),
+                str(output_root),
             ]
         )
 

@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
+
+from ai_trainer.runtime_paths import configured_dataset_path, default_model_path, save_dataset_path
 
 
 def make_parser() -> argparse.ArgumentParser:
@@ -12,11 +15,11 @@ def make_parser() -> argparse.ArgumentParser:
         description="Show laptop camera video and estimated 3-D pose in one PyQt window."
     )
     parser.add_argument("--camera", type=int, default=0, help="OpenCV camera index")
+    parser.add_argument("--model", type=Path, help="Local MediaPipe Pose Landmarker .task bundle")
     parser.add_argument(
-        "--model",
+        "--dataset",
         type=Path,
-        default=Path("models/pose_landmarker_lite.task"),
-        help="Local MediaPipe Pose Landmarker .task bundle",
+        help="Extracted AI Hub dataset directory; persists as the default for reference building",
     )
     parser.add_argument("--width", type=int, default=1280)
     parser.add_argument("--height", type=int, default=720)
@@ -35,10 +38,11 @@ def main(
     root = (
         Path(project_root).resolve()
         if project_root is not None
-        else Path(__file__).resolve().parents[3]
+        else Path.cwd().resolve()
     )
-    model_path = args.model if args.model.is_absolute() else root / args.model
-    model_path = model_path.resolve()
+    requested_model = args.model or default_model_path(root)
+    model_path = requested_model if requested_model.is_absolute() else root / requested_model
+    model_path = model_path.expanduser().resolve()
     if not model_path.is_file():
         print(
             f"Pose model not found: {model_path}\n"
@@ -46,6 +50,25 @@ def main(
             file=sys.stderr,
         )
         return 2
+
+    if args.dataset is not None:
+        dataset_path = args.dataset.expanduser().resolve()
+        if not dataset_path.is_dir():
+            print(f"Dataset directory not found: {dataset_path}", file=sys.stderr)
+            return 2
+        try:
+            save_dataset_path(dataset_path)
+        except OSError as error:
+            print(f"Could not save dataset setting: {error}", file=sys.stderr)
+            return 2
+    else:
+        dataset_path = configured_dataset_path()
+        if dataset_path is not None and not dataset_path.is_dir():
+            print(
+                f"Saved dataset directory is unavailable and will not be used: {dataset_path}",
+                file=sys.stderr,
+            )
+            dataset_path = None
 
     try:
         from PyQt5.QtCore import Qt
@@ -74,11 +97,12 @@ def main(
         print(f"Invalid live pose configuration: {error}", file=sys.stderr)
         return 2
 
+    os.environ.setdefault("QT_AUTO_SCREEN_SCALE_FACTOR", "1")
     QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
     application = QApplication(sys.argv[:1])
     application.setApplicationName("AI Trainer Live Pose")
-    window = LivePoseWindow(model_path, config)
+    window = LivePoseWindow(model_path, config, dataset_path=dataset_path)
     window.show()
     window.start()
     return int(application.exec_())

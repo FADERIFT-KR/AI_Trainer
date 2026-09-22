@@ -22,6 +22,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from ai_trainer.live_pose.core import FrameProcessor, PoseObservation, landmarks_to_array
 from ai_trainer.live_pose.render import render_3d_pose
+from ai_trainer.live_pose.worker import _camera_backends
 from scripts.download_pose_model import DEFAULT_OUTPUT, _valid_model
 
 
@@ -184,6 +185,21 @@ class SkeletonRenderingTests(unittest.TestCase):
         np.testing.assert_array_equal(points, original)
         self.assertFalse(np.array_equal(plain, highlighted))
         self.assertGreater(int(np.count_nonzero(highlighted[:, :, 2] > plain[:, :, 2])), 0)
+
+
+class CameraBackendTests(unittest.TestCase):
+    def test_platform_native_backends_are_available_without_duplicates(self) -> None:
+        backend_api = SimpleNamespace(
+            CAP_ANY=0,
+            CAP_DSHOW=700,
+            CAP_MSMF=1400,
+            CAP_AVFOUNDATION=1200,
+            CAP_V4L2=200,
+        )
+
+        self.assertEqual(_camera_backends(backend_api, "win32"), [0, 700, 1400])
+        self.assertEqual(_camera_backends(backend_api, "darwin"), [0, 1200])
+        self.assertEqual(_camera_backends(backend_api, "linux"), [0, 200])
 
 
 class PoseModelBundleTests(unittest.TestCase):

@@ -1,4 +1,4 @@
-"""Qt worker thread that owns the camera and MediaPipe detector."""
+"""Qt worker thread that owns a platform-native camera and MediaPipe detector."""
 
 from __future__ import annotations
 
@@ -33,17 +33,28 @@ class CameraConfig:
             raise ValueError("confidence must be between 0 and 1")
 
 
-def _open_camera(cv2: object, config: CameraConfig):
-    backends: list[int] = []
-    if sys.platform == "win32":
-        for name in ("CAP_DSHOW", "CAP_MSMF"):
-            backend = getattr(cv2, name, None)
-            if backend is not None and backend not in backends:
-                backends.append(backend)
-    backends.append(getattr(cv2, "CAP_ANY", 0))
+def _camera_backends(cv2: object, platform_name: str | None = None) -> list[int]:
+    """Return usable capture backends in a portable, native-first order."""
 
+    platform_name = sys.platform if platform_name is None else platform_name
+    names = ["CAP_ANY"]
+    if platform_name.startswith("win"):
+        names.extend(("CAP_DSHOW", "CAP_MSMF"))
+    elif platform_name == "darwin":
+        names.append("CAP_AVFOUNDATION")
+    else:
+        names.append("CAP_V4L2")
+    backends: list[int] = []
+    for name in names:
+        backend = getattr(cv2, name, None)
+        if isinstance(backend, int) and backend not in backends:
+            backends.append(backend)
+    return backends or [0]
+
+
+def _open_camera(cv2: object, config: CameraConfig):
     capture = None
-    for backend in backends:
+    for backend in _camera_backends(cv2):
         candidate = cv2.VideoCapture(config.camera_index, backend)
         if candidate.isOpened():
             capture = candidate
@@ -51,8 +62,9 @@ def _open_camera(cv2: object, config: CameraConfig):
         candidate.release()
     if capture is None:
         raise RuntimeError(
-            f"카메라 {config.camera_index}을(를) 열 수 없습니다. "
-            "Windows 설정에서 카메라 권한과 다른 앱의 사용 여부를 확인하세요."
+            f"Could not open camera {config.camera_index}. Check that it is connected, "
+            "not in use by another application, and that this app has camera permission "
+            "in your operating-system privacy settings."
         )
 
     capture.set(cv2.CAP_PROP_FRAME_WIDTH, config.width)
@@ -71,12 +83,7 @@ class CameraPoseWorker(QThread):
     status_changed = pyqtSignal(str)
     fatal_error = pyqtSignal(str)
 
-    def __init__(
-        self,
-        model_path: str | Path,
-        config: CameraConfig,
-        parent=None,
-    ) -> None:
+    def __init__(self, model_path: str | Path, config: CameraConfig, parent=None) -> None:
         super().__init__(parent)
         self.model_path = Path(model_path).resolve()
         self.config = config
@@ -89,11 +96,10 @@ class CameraPoseWorker(QThread):
                 import cv2
             except ImportError as error:
                 raise RuntimeError(
-                    "OpenCV가 설치되지 않았습니다. "
-                    "python -m pip install -r requirements.txt 를 실행하세요."
+                    "OpenCV is not installed. Run: python -m pip install -r requirements.txt"
                 ) from error
 
-            self.status_changed.emit("3D 자세 모델을 불러오는 중…")
+            self.status_changed.emit("Loading 3D pose model…")
             detector = MediaPipePoseDetector(
                 self.model_path,
                 min_detection_confidence=self.config.confidence,
@@ -107,9 +113,9 @@ class CameraPoseWorker(QThread):
                 skeleton_height=self.config.skeleton_height,
             )
 
-            self.status_changed.emit("카메라를 여는 중…")
+            self.status_changed.emit("Opening camera…")
             capture = _open_camera(cv2, self.config)
-            self.status_changed.emit("카메라 실행 중")
+            self.status_changed.emit("Camera is running")
 
             previous_time = time.perf_counter()
             smoothed_fps = 0.0
@@ -119,7 +125,7 @@ class CameraPoseWorker(QThread):
                 if not success or frame_bgr is None:
                     consecutive_failures += 1
                     if consecutive_failures >= 30:
-                        raise RuntimeError("카메라 프레임을 연속으로 읽지 못했습니다.")
+                        raise RuntimeError("Camera did not provide a frame for 30 consecutive reads")
                     self.msleep(10)
                     continue
                 consecutive_failures = 0
@@ -136,8 +142,8 @@ class CameraPoseWorker(QThread):
                 self.frame_ready.emit(processed, smoothed_fps)
         except (PoseBackendError, RuntimeError, ValueError, OSError) as error:
             self.fatal_error.emit(str(error))
-        except Exception as error:  # Media backends can raise vendor-specific errors.
-            self.fatal_error.emit(f"실시간 자세 처리 중 예기치 않은 오류: {error}")
+        except Exception as error:
+            self.fatal_error.emit(f"Unexpected live-pose processing error: {error}")
         finally:
             if capture is not None:
                 capture.release()
@@ -148,4 +154,4 @@ class CameraPoseWorker(QThread):
                     pass
 
 
-__all__ = ["CameraConfig", "CameraPoseWorker"]
+__all__ = ["CameraConfig", "CameraPoseWorker", "_camera_backends"]
