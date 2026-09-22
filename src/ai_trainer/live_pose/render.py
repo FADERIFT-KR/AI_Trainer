@@ -169,8 +169,13 @@ def render_3d_pose(
     width: int = 640,
     height: int = 480,
     visibility_threshold: float = 0.45,
+    highlight_indices: Iterable[int] = (),
 ) -> np.ndarray:
-    """Render world landmarks as a responsive three-quarter 3-D BGR view."""
+    """Render world landmarks as a responsive three-quarter 3-D BGR view.
+
+    ``highlight_indices`` is display-only metadata used by the post-session
+    feedback view.  It never changes landmarks supplied to assessment code.
+    """
 
     if width < 64 or height < 64:
         raise ValueError("3-D canvas must be at least 64 x 64 pixels")
@@ -187,6 +192,7 @@ def render_3d_pose(
     if np.count_nonzero(valid) < 2:
         return np.ascontiguousarray(canvas)
     screen, depth = _project_world_landmarks(points, valid, width, height)
+    highlighted = {int(index) for index in highlight_indices if 0 <= int(index) < len(points)}
 
     visible_edges: list[tuple[float, int, int]] = []
     for start, end in POSE_CONNECTIONS:
@@ -197,13 +203,19 @@ def render_3d_pose(
             canvas,
             tuple(screen[start]),
             tuple(screen[end]),
-            _limb_color(start, end),
+            (40, 40, 255) if start in highlighted or end in highlighted
+            else _limb_color(start, end),
             thickness=4,
         )
     for index, pixel in enumerate(screen):
         if valid[index]:
             _draw_circle(canvas, tuple(pixel), 5, (238, 242, 248))
-            _draw_circle(canvas, tuple(pixel), 3, _limb_color(index, index))
+            _draw_circle(
+                canvas,
+                tuple(pixel),
+                4 if index in highlighted else 3,
+                (40, 40, 255) if index in highlighted else _limb_color(index, index),
+            )
 
     # Small axis triad communicates that this is a projected 3-D view.
     axis_origin = (44, height - 40)

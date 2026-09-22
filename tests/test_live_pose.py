@@ -175,6 +175,16 @@ class SkeletonRenderingTests(unittest.TestCase):
         self.assertGreater(int(np.count_nonzero(image)), 0)
         self.assertTrue(image.flags.c_contiguous)
 
+    def test_display_only_highlight_does_not_change_input_landmarks(self) -> None:
+        points = landmarks_to_array(fake_landmarks())
+        original = points.copy()
+        plain = render_3d_pose(points, width=192, height=128)
+        highlighted = render_3d_pose(points, width=192, height=128, highlight_indices=(25,))
+
+        np.testing.assert_array_equal(points, original)
+        self.assertFalse(np.array_equal(plain, highlighted))
+        self.assertGreater(int(np.count_nonzero(highlighted[:, :, 2] > plain[:, :, 2])), 0)
+
 
 class PoseModelBundleTests(unittest.TestCase):
     def test_downloaded_model_passes_offline_integrity_and_bundle_validation(self) -> None:
