@@ -11,6 +11,7 @@ FPS 스무딩, 에러 처리)을 따르되 파이프라인 뒷단(Common Skeleto
 from __future__ import annotations
 
 import json
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -93,6 +94,7 @@ class SquatPipelineWorker(QThread):
         config: CameraConfig | None = None,
         view_mode: str = VIEW_FRONT,
         recording_dir: str | Path | None = None,
+        debug_tap=None,
         parent=None,
     ):
         super().__init__(parent)
@@ -102,6 +104,8 @@ class SquatPipelineWorker(QThread):
         self.config = config or CameraConfig()
         self.view_mode = view_mode
         self.recording_dir = Path(recording_dir) if recording_dir is not None else None
+        # 디버깅 모드에서만 주어지는 ai_trainer.debug.StageTap. None이면 공정 스냅샷을 만들지 않는다.
+        self.debug_tap = debug_tap
         # 3-2-1 카운트다운이 끝나기 전까지는 False로 두어 캘리브레이션/phase/DTW가 시작되지
         # 않게 한다. 메인(UI) 스레드에서 True로 바꿔주면 그 다음 프레임부터 세션이 시작된다.
         # 단순 bool 속성 읽기/쓰기라 CPython GIL 하에서 스레드 간 공유에 안전하다
@@ -242,9 +246,26 @@ class SquatPipelineWorker(QThread):
             previous_time = time.perf_counter()
             smoothed_fps = 0.0
             consecutive_failures = 0
+            tap = self.debug_tap
+            no_filter = os.environ.get("AI_TRAINER_NO_FILTER") == "1"
+            if tap is not None:
+                bridge.trace = {}
+                bridge3d.trace = {}
+            timing = {"read": 0.0, "mediapipe": 0.0, "rest": 0.0}
+            loop_start_prev = None
+            t_read = t_mp = 0.0
 
             while not self.isInterruptionRequested():
+                t_loop = time.perf_counter()
+                if tap is not None and loop_start_prev is not None:
+                    total = t_loop - loop_start_prev
+                    rest = total - t_read - t_mp
+                    for key, value in (("read", t_read), ("mediapipe", t_mp), ("rest", rest)):
+                        ms = 1000 * value
+                        timing[key] = ms if timing[key] == 0.0 else timing[key] * 0.9 + ms * 0.1
+                loop_start_prev = t_loop
                 success, frame_bgr = capture.read()
+                t_read = time.perf_counter() - t_loop
                 if not success or frame_bgr is None:
                     consecutive_failures += 1
                     if consecutive_failures >= 30:
@@ -262,9 +283,11 @@ class SquatPipelineWorker(QThread):
                         self.status_changed.emit(f"카메라 보정 중지: {error}")
                         undistorter = None
                 display_bgr = np.ascontiguousarray(frame_bgr[:, ::-1] if self.config.mirror else frame_bgr)
+                t_mp_start = time.perf_counter()
                 observation = detector.process(np.ascontiguousarray(display_bgr[:, :, ::-1]))
 
                 now = time.perf_counter()
+                t_mp = now - t_mp_start
                 instantaneous_fps = 1.0 / max(now - previous_time, 1e-6)
                 previous_time = now
                 smoothed_fps = instantaneous_fps if smoothed_fps == 0.0 else smoothed_fps * 0.90 + instantaneous_fps * 0.10
@@ -335,6 +358,18 @@ class SquatPipelineWorker(QThread):
                     common3d, frozen3d, _mean_conf3d = bridge3d.update(observation.world_landmarks)
                     display_common3d, _, _ = display_bridge3d.update(observation.world_landmarks)
                     n_frozen = int(frozen_mask.sum())
+
+                    if tap is not None:
+                        thumb_w = 320
+                        thumb = cv2.resize(display_bgr, (thumb_w, max(1, int(thumb_w * h / w))))
+                        tap.put("mp_image_2d", draw_2d_pose(thumb, observation.image_landmarks),
+                                note=f"평균 신뢰도 {mean_conf:.2f}")
+                        tap.put("mp_world_3d", observation.world_landmarks[:, :3])
+                        tap.put("common2d_raw", bridge.trace.get("raw"), frame_size=(w, h))
+                        tap.put("common2d_filtered", common2d, note=f"freeze {n_frozen}", frame_size=(w, h))
+                        tap.put("common3d_raw", bridge3d.trace.get("raw"))
+                        tap.put("common3d_spike", bridge3d.trace.get("after_spike"))
+                        tap.put("common3d_smooth", common3d, note=f"freeze {int(frozen3d.sum())}")
 
                     # Keep calibrated ray features in recordings for a future
                     # paired webcam 2D/3D lifting evaluation.  They are not fed
@@ -434,11 +469,42 @@ class SquatPipelineWorker(QThread):
                     aligned_frame = np.einsum(
                         "ij,pj->pi", session.R_body.T, display_common3d / session.scale3d
                     )
-                if common2d is not None:
+                aligned_frame_pre_display = aligned_frame
+                if common2d is not None and not no_filter:
                     aligned_frame = display_corrector.update(
                         common2d, aligned_frame,
                         observation.world_landmarks if observation is not None else None,
                     )
+
+                if tap is not None:
+                    if not pose_found:
+                        for stage_id in ("mp_image_2d", "mp_world_3d", "common2d_raw", "common2d_filtered",
+                                         "common3d_raw", "common3d_spike", "common3d_smooth"):
+                            tap.put(stage_id, None, note="사람 미검출")
+                    if analysis_aligned_frame is None:
+                        if not self.session_active:
+                            wait_note = "세션 시작 전 (카운트다운 대기)"
+                        elif not framing_ok:
+                            wait_note = "화각 조건 미충족"
+                        elif session.R_body is None:
+                            wait_note = "준비 자세 캘리브레이션 중"
+                        else:
+                            wait_note = "판정 프레임 없음"
+                        tap.put("analysis_aligned", None, note=wait_note)
+                    else:
+                        tap.put("analysis_aligned", analysis_aligned_frame)
+                    calib_note = "" if session.R_body is not None else "캘리브레이션 전"
+                    tap.put("display_aligned_pre", aligned_frame_pre_display, note=calib_note)
+                    tap.put("final_display", aligned_frame, note=calib_note)
+                    tap.meta(
+                        fps=smoothed_fps,
+                        timing=dict(timing),
+                        view=self.view_mode,
+                        filters="off" if no_filter else "on",
+                        phase=phase,
+                        status=None if framing_ok else framing_message,
+                    )
+                    tap.flush()
 
                 # Keep preparation/calibration frames for the final full-view replay.
                 if view_recorder is not None:

@@ -12,10 +12,13 @@ Weighted DTW 채점은 이 브랜치(feature/dtw-pipeline 유래)의 AI Hub 기�
     python scripts/build_reference_db.py       # (없다면) Reference DB 구축
 
 사용:
-    python scripts/run_game.py
+    python scripts/run_game.py            # 실행 시 사용자/디버깅 모드 선택 창
+    python scripts/run_game.py --user     # 바로 사용자 모드
+    python scripts/run_game.py --debug    # 바로 디버깅 모드 (공정별 스켈레톤 10패널 창 추가)
 """
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -25,14 +28,34 @@ from PyQt5.QtCore import Qt  # noqa: E402
 from PyQt5.QtWidgets import QApplication  # noqa: E402
 
 from ai_trainer.core.game_ui.app import GameWindow  # noqa: E402
+from ai_trainer.core.game_ui.mode_dialog import MODE_DEBUG, MODE_USER, choose_mode  # noqa: E402
+
+
+def _parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="AI Trainer 게임형 UI")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--user", action="store_true", help="사용자 모드로 바로 실행")
+    group.add_argument("--debug", action="store_true", help="디버깅 모드로 바로 실행")
+    return parser.parse_args(argv)
 
 
 def main() -> int:
+    args = _parse_args(sys.argv[1:])
     QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
     app = QApplication(sys.argv[:1])
     app.setApplicationName("AI Trainer")
-    window = GameWindow()
+
+    if args.debug:
+        mode = MODE_DEBUG
+    elif args.user:
+        mode = MODE_USER
+    else:
+        mode = choose_mode()
+        if mode is None:
+            return 0
+
+    window = GameWindow(debug=(mode == MODE_DEBUG))
     window.show()
     return int(app.exec_())
 

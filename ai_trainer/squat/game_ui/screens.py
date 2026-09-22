@@ -445,9 +445,11 @@ class CompareScreen(QWidget):
 
     back_requested = pyqtSignal()
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, debug_tap=None):
         super().__init__(parent)
         self.worker: SquatPipelineWorker | None = None
+        # 디버깅 모드에서만 주어진다(ai_trainer.debug.StageTap). 워커로 그대로 넘긴다.
+        self._debug_tap = debug_tap
         self.ref_track: ReferenceTrack | None = None
 
         self.camera_panel = ImagePanel("카메라 준비 중…")
@@ -886,6 +888,7 @@ class CompareScreen(QWidget):
             config=CameraConfig(camera_index=self._last_camera_index, mirror=False),
             view_mode=view,
             recording_dir=self._session_recording.directory if self._session_recording is not None else None,
+            debug_tap=self._debug_tap,
         )
         self.worker.status_ready.connect(self._on_status)
         self.worker.status_changed.connect(

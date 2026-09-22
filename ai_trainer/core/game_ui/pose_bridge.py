@@ -7,12 +7,17 @@ Common Skeleton(18노드) 변환 + 저신뢰 관절 freeze 처리.
 """
 from __future__ import annotations
 
+import os
+
 import numpy as np
 
 from ai_trainer.core.common_skeleton import COMMON_JOINT_NAMES
 
 from ai_trainer.core.game_ui.one_euro_filter import OneEuroFilter
 from ai_trainer.core.game_ui.spike_guard import DisplayLegLengthStabilizer, Live3DSpikeGuard
+
+# 진단용: AI_TRAINER_NO_FILTER=1 이면 One-Euro/스파이크가드/다리길이 안정화를 모두 우회
+_NO_FILTER = os.environ.get("AI_TRAINER_NO_FILTER") == "1"
 
 # MediaPipe PoseLandmark 인덱스 (Task API, 33점 — live_pose.render.POSE_CONNECTIONS와 동일 토폴로지)
 _MP_INDEX = {
@@ -51,6 +56,8 @@ class CommonSkeletonBridge:
         # 하강/상승 중 DTW feature(heel_height/pelvis_trajectory)에 노이즈로 섞여 들어가
         # 오탐을 유발하던 문제(실사용 확인) 완화용. one_euro_filter.py 참고.
         self._smoother = OneEuroFilter(n_points=len(COMMON_JOINT_NAMES), n_dims=2)
+        # 디버그 모드에서 공정별 중간값을 남기는 곳. None이면 기록하지 않는다.
+        self.trace: dict[str, np.ndarray] | None = None
 
     def update(self, image_landmarks: np.ndarray, width: int, height: int) -> tuple[np.ndarray, np.ndarray, float]:
         """image_landmarks: (33,4) [x,y,z,visibility], x/y는 [0,1] 정규화.
@@ -77,7 +84,10 @@ class CommonSkeletonBridge:
                 conf[i] = vis_all[idx]
 
         good_mask = conf >= self.min_visibility
-        raw = self._smoother(raw, good_mask)
+        if self.trace is not None:
+            self.trace["raw"] = raw.copy()
+        if not _NO_FILTER:
+            raw = self._smoother(raw, good_mask)
 
         frozen = np.zeros(len(COMMON_JOINT_NAMES), dtype=bool)
         out = self.last_good.copy()
@@ -136,6 +146,7 @@ class CommonSkeleton3DBridge:
         self._smoother = OneEuroFilter(n_points=len(COMMON_JOINT_NAMES), n_dims=3, min_cutoff=0.8, beta=12.0)
         self._spike_guard = Live3DSpikeGuard(stabilize_feet=stabilize_feet)
         self._display_leg_lengths = DisplayLegLengthStabilizer() if stabilize_feet else None
+        self.trace: dict[str, np.ndarray] | None = None
 
     def update(self, world_landmarks: np.ndarray) -> tuple[np.ndarray, np.ndarray, float]:
         """world_landmarks: (33,4) [x,y,z,visibility], 미터 단위 실좌표.
@@ -162,8 +173,19 @@ class CommonSkeleton3DBridge:
                 conf[i] = vis_all[idx]
 
         good_mask = (conf >= self.min_visibility) & np.isfinite(raw).all(axis=1)
-        raw, guarded = self._spike_guard(raw, good_mask)
-        raw = self._smoother(raw, good_mask)
+        if self.trace is not None:
+            self.trace["raw"] = raw.copy()
+        if _NO_FILTER:
+            guarded = np.zeros(len(COMMON_JOINT_NAMES), dtype=bool)
+            if self.trace is not None:
+                self.trace["after_spike"] = raw.copy()
+        else:
+            raw, guarded = self._spike_guard(raw, good_mask)
+            if self.trace is not None:
+                self.trace["after_spike"] = raw.copy()
+            raw = self._smoother(raw, good_mask)
+        if self.trace is not None:
+            self.trace["after_smooth"] = raw.copy()
 
         frozen = np.zeros(len(COMMON_JOINT_NAMES), dtype=bool)
         out = self.last_good.copy()
@@ -192,7 +214,7 @@ class CommonSkeleton3DBridge:
         # 기대하는 "정확히 Hip=원점" 계약(lifting 모델 경로와 동일)을 보장하기 위해 우리
         # 정의(LHip/RHip 평균)로 명시적으로 재중심화한다.
         out = out - out[pelvis_index]
-        if self._display_leg_lengths is not None:
+        if self._display_leg_lengths is not None and not _NO_FILTER:
             out = self._display_leg_lengths(out, conf, frozen, self.min_visibility)
 
         return out, frozen, float(np.mean(conf))
