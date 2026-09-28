@@ -35,10 +35,19 @@ class CameraConfig:
     confidence: float = 0.4  # 실사용 환경(조명/거리 이상적이지 않음)에서 recall을 우선
     calibration_path: str | Path | None = None  # ChArUco intrinsic calibration JSON
     calibration_alpha: float = 0.0  # 0=valid FOV 우선, 1=전체 FOV 유지(검은 테두리 가능)
+    # 카메라 대신 사전 녹화 영상을 입력으로 쓸 때의 파일 경로. 설정되면 camera_index는
+    # 무시되고, 영상이 끝나면 캡처가 종료된다(카메라는 끝이 없다는 점이 다름).
+    video_path: str | Path | None = None
+
+    @property
+    def is_video(self) -> bool:
+        return self.video_path is not None
 
     def __post_init__(self) -> None:
         if self.camera_index < 0:
             raise ValueError("camera_index cannot be negative")
+        if self.video_path is not None and not Path(self.video_path).is_file():
+            raise ValueError(f"영상 파일을 찾을 수 없습니다: {self.video_path}")
         if self.width <= 0 or self.height <= 0 or self.requested_fps <= 0:
             raise ValueError("Camera width, height, and FPS must be positive")
         if not 0.0 <= self.confidence <= 1.0:
@@ -48,6 +57,12 @@ class CameraConfig:
 
 
 def _open_camera(cv2: object, config: CameraConfig):
+    if config.is_video:
+        capture = cv2.VideoCapture(str(config.video_path))
+        if not capture.isOpened():
+            raise RuntimeError(f"영상을 열 수 없습니다: {config.video_path}")
+        return capture
+
     backends: list[int] = []
     if sys.platform == "win32":
         for name in ("CAP_DSHOW", "CAP_MSMF"):

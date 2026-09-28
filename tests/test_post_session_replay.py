@@ -41,7 +41,8 @@ class PostSessionReplayTests(unittest.TestCase):
         self.assertIn("LKnee", span.joints)
         self.assertIn("RKnee", span.joints)
 
-    def test_normal_rep_is_not_replayed_as_an_error(self):
+    def test_normal_rep_is_replayable_but_marks_no_error(self):
+        """정상 REP도 전체 영상 다시보기에는 나오되, 빨간 오류 구간은 없어야 한다."""
         with tempfile.TemporaryDirectory() as temp:
             directory = Path(temp)
             self._write_view(directory)
@@ -49,7 +50,8 @@ class PostSessionReplayTests(unittest.TestCase):
                 "view_mode": "front", "view_rep_index": 0, "sequence_class": "정상",
                 "display_class": "정상",
             }])
-        self.assertEqual(views, [])
+        self.assertEqual(len(views), 1)
+        self.assertEqual(views[0].spans, ())
 
     def test_annotation_changes_only_error_span_and_uses_red_joint_marker(self):
         frame = np.zeros((120, 240, 3), dtype=np.uint8)

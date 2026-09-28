@@ -35,11 +35,18 @@ from ai_trainer.squat.joint_feedback import JointScore, compute_joint_scores, vi
 from ai_trainer.core.s2_pose.mediapipe_pose import MediaPipePoseDetector, PoseBackendError
 from ai_trainer.core.ui.pose_overlay import draw_2d_pose
 from ai_trainer.core.s1_capture.camera_worker import CameraConfig, _open_camera
+from ai_trainer.squat.depth_source import (
+    SOURCE_MEDIAPIPE,
+    LiftingDepthEstimator,
+    combine as combine_depth,
+    lifting_to_common3d,
+)
 from ai_trainer.squat.lifting_model import TemporalLiftingNet
 from ai_trainer.squat.online_dtw import OnlineSquatSession
 from ai_trainer.squat.reference_db_io import load_reference_db
 from ai_trainer.squat.scoring import PASS_SCORE_THRESHOLD, distance_to_score
 from ai_trainer.squat.view_conditions import assess_view_rep, load_view_condition_config
+from ai_trainer.core.s3_mapping.common_skeleton import COMMON_JOINT_NAMES as _COMMON_NAMES
 
 from ai_trainer.squat.game_ui.framing_check import (
     check_framing,
@@ -60,6 +67,13 @@ TWO_STAGE_DIR = ROOT / "output" / "two_stage_squat"
 SIDE_GATE_PATH = TWO_STAGE_DIR / "side_view_gates.npz"
 SIDE_MODEL_PATH = TWO_STAGE_DIR / "side_view_mt_stgcn.pt"
 DEFAULT_CAMERA_CALIBRATION_PATH = ROOT / "configs" / "local_camera_calibration.json"
+_NECK_IDX = _COMMON_NAMES.index("Neck")
+_HIP_IDX = _COMMON_NAMES.index("Hip")
+_LHIP_IDX = _COMMON_NAMES.index("LHip")
+_RHIP_IDX = _COMMON_NAMES.index("RHip")
+# 화면용 방향 정렬에 쓸 표본 수. 서 있는 초반 프레임의 골반축 중앙값을 쓰면
+# 한두 프레임이 흔들려도 방향이 튀지 않는다.
+_DISPLAY_YAW_SAMPLES = 15
 
 
 @dataclass(frozen=True)
@@ -80,12 +94,16 @@ class PipelineStatus:
     joint_scores: list[JointScore] | None  # 관절별 위치/각도 오차 (joint_feedback.compute_joint_scores)
     aligned_frame: np.ndarray | None  # 판정 입력과 분리된 표시용 보정 3D (18,3)
     view_mode: str  # front / left / right
+    # 정규화 전 Common Skeleton 3D (18,3). 메트릭 검증에서 AI Hub 정답과 대조할 때
+    # 회전·스케일 정합 외의 변수를 넣지 않으려고 이 원본 좌표를 쓴다.
+    common3d: np.ndarray | None = None
 
 
 class SquatPipelineWorker(QThread):
     status_ready = pyqtSignal(object)  # PipelineStatus
     status_changed = pyqtSignal(str)
     fatal_error = pyqtSignal(str)
+    source_finished = pyqtSignal()  # 사전 녹화 영상이 끝까지 재생됨 (카메라 입력에는 없음)
 
     def __init__(
         self,
@@ -94,6 +112,8 @@ class SquatPipelineWorker(QThread):
         view_mode: str = VIEW_FRONT,
         recording_dir: str | Path | None = None,
         debug_tap=None,
+        depth_source: str = SOURCE_MEDIAPIPE,
+        record_view: str = "",
         parent=None,
     ):
         super().__init__(parent)
@@ -105,6 +125,13 @@ class SquatPipelineWorker(QThread):
         self.recording_dir = Path(recording_dir) if recording_dir is not None else None
         # 디버깅 모드에서만 주어지는 ai_trainer.debug.StageTap. None이면 공정 스냅샷을 만들지 않는다.
         self.debug_tap = debug_tap
+        # 3D를 어디서 얻을지 (ai_trainer.squat.depth_source 참고). 정면 영상에서
+        # 상체 기울기를 살리려면 lifting/hybrid가 필요하다.
+        self.depth_source = depth_source
+        # 녹화 파일 이름과 화면 표기에 쓰는 실제 시점 이름. AI Hub 사선(camera2)처럼
+        # 판정 규칙이 없는 각도는 view_mode를 front로 돌리되 기록은 'oblique'로 남겨야
+        # 정면 녹화를 덮어쓰지 않는다.
+        self.record_view = record_view or view_mode
         # 3-2-1 카운트다운이 끝나기 전까지는 False로 두어 캘리브레이션/phase/DTW가 시작되지
         # 않게 한다. 메인(UI) 스레드에서 True로 바꿔주면 그 다음 프레임부터 세션이 시작된다.
         # 단순 bool 속성 읽기/쓰기라 CPython GIL 하에서 스레드 간 공유에 안전하다
@@ -198,6 +225,14 @@ class SquatPipelineWorker(QThread):
 
             bridge = CommonSkeletonBridge(min_visibility=self.config.confidence)
             bridge3d = CommonSkeleton3DBridge(min_visibility=self.config.confidence)
+            lifting_estimator = None
+            if self.depth_source != SOURCE_MEDIAPIPE:
+                from ai_trainer.squat.online_dtw import WINDOW_T
+
+                lifting_estimator = LiftingDepthEstimator(
+                    lifting_model, device, WINDOW_T, calib_frames=session.calib_frames
+                )
+                self.status_changed.emit(f"3D 소스: {self.depth_source}")
             common2d_history: list[np.ndarray] = []
             try:
                 view_condition_config = load_view_condition_config()
@@ -228,12 +263,19 @@ class SquatPipelineWorker(QThread):
                 min_tracking_confidence=self.config.confidence,
             )
 
-            self.status_changed.emit("카메라를 여는 중…")
+            is_video = self.config.is_video
+            self.status_changed.emit("영상을 여는 중…" if is_video else "카메라를 여는 중…")
             capture = _open_camera(cv2, self.config)
+            # 영상은 읽는 만큼 즉시 나오므로, 카메라와 같은 속도로 흐르도록 원본 fps에
+            # 맞춰 프레임 간격을 맞춘다(안 그러면 몇 배속으로 지나가 phase 판정이 깨진다).
+            video_frame_interval = 0.0
+            if is_video:
+                source_fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
+                video_frame_interval = 1.0 / source_fps if source_fps > 1.0 else 1.0 / 30.0
             self.status_changed.emit("실행 중")
             if self.recording_dir is not None:
                 view_recorder = ViewRecorder(
-                    self.recording_dir, self.view_mode, cv2,
+                    self.recording_dir, self.record_view, cv2,
                     camera_index=self.config.camera_index,
                     calibration_applied=undistorter is not None,
                 )
@@ -242,6 +284,11 @@ class SquatPipelineWorker(QThread):
             smoothed_fps = 0.0
             consecutive_failures = 0
             tap = self.debug_tap
+            # 촬영 각도가 달라도 화면에서는 늘 같은 방향으로 서 있게, 수직축 회전(yaw)만
+            # 한 번 구해 고정한다. 수직축 회전은 자세를 왜곡하지 않고 몸을 돌리기만 한다
+            # (R_body 전체 정렬은 측면에서 축이 틀어져 스켈레톤이 꺾여 보였다).
+            display_yaw = None
+            yaw_samples: list[float] = []
             timing = {"read": 0.0, "mediapipe": 0.0, "rest": 0.0}
             loop_start_prev = None
             t_read = t_mp = 0.0
@@ -257,6 +304,10 @@ class SquatPipelineWorker(QThread):
                 loop_start_prev = t_loop
                 success, frame_bgr = capture.read()
                 t_read = time.perf_counter() - t_loop
+                if (not success or frame_bgr is None) and is_video:
+                    self.status_changed.emit("영상 재생 완료")
+                    self.source_finished.emit()
+                    break
                 if not success or frame_bgr is None:
                     consecutive_failures += 1
                     if consecutive_failures >= 30:
@@ -346,6 +397,17 @@ class SquatPipelineWorker(QThread):
                     # 멈추면 마지막 자세가 화면에 남고 복귀할 때 관절이 튄다.
                     common2d, frozen_mask, mean_conf = bridge.update(observation.image_landmarks, w, h)
                     common3d, frozen3d, _mean_conf3d = bridge3d.update(observation.world_landmarks)
+                    if lifting_estimator is not None:
+                        lifted = lifting_estimator.push(common2d)
+                        if lifted is None:
+                            # 창이 찰 때까지는 판정에 넘기지 않는다 — 섞인 좌표계가
+                            # 캘리브레이션에 들어가면 R_body가 틀어진다.
+                            continue
+                        _center, lifted_raw = lifted
+                        common3d = combine_depth(
+                            self.depth_source, common3d,
+                            lifting_to_common3d(lifted_raw, common3d),
+                        )
                     n_frozen = int(frozen_mask.sum())
 
                     if tap is not None:
@@ -450,11 +512,31 @@ class SquatPipelineWorker(QThread):
                     video_bgr = display_bgr.copy()
                     cv2.rectangle(video_bgr, (gbox[0], gbox[1]), (gbox[2], gbox[3]), (60, 60, 240), 2)
 
-                if (common3d is not None and session.R_body is not None
-                        and session.scale3d is not None):
-                    aligned_frame = np.einsum(
-                        "ij,pj->pi", session.R_body.T, common3d / session.scale3d
-                    )
+                if common3d is not None:
+                    # 화면용 좌표는 회전시키지 않는다. R_body(몸 방향 정렬)는 측면·사선
+                    # 촬영에서 좌우 hip 깊이가 불안정해 축이 틀어지고, 그러면 스켈레톤이
+                    # 꺾이거나 좌우가 뒤집힌 것처럼 보인다(실측 확인). 보는 각도는
+                    # OrbitSkeletonPanel에서 사용자가 직접 돌리면 되므로 여기서는
+                    # 다리 길이로 크기만 맞추고 y축만 위로 뒤집어 넘긴다.
+                    # scale3d는 캘리브레이션이 끝나야 생기는 속성이라 그 전에는 없다.
+                    scale = getattr(session, "scale3d", None) or float(
+                        np.linalg.norm(common3d[_NECK_IDX] - common3d[_HIP_IDX])
+                    ) or 1.0
+                    aligned_frame = common3d / scale
+                    aligned_frame = aligned_frame * np.array([1.0, -1.0, 1.0])
+
+                    if display_yaw is None:
+                        hip_axis = aligned_frame[_LHIP_IDX] - aligned_frame[_RHIP_IDX]
+                        if np.isfinite(hip_axis).all() and np.linalg.norm(hip_axis) > 1e-6:
+                            yaw_samples.append(float(np.arctan2(hip_axis[2], hip_axis[0])))
+                        if len(yaw_samples) >= _DISPLAY_YAW_SAMPLES:
+                            display_yaw = float(np.median(yaw_samples))
+                    if display_yaw is not None:
+                        # 골반선이 화면 가로축(+x)을 향하도록 수직축 둘레로 돌린다.
+                        cos_y, sin_y = np.cos(display_yaw), np.sin(display_yaw)
+                        x = aligned_frame[:, 0] * cos_y + aligned_frame[:, 2] * sin_y
+                        z = -aligned_frame[:, 0] * sin_y + aligned_frame[:, 2] * cos_y
+                        aligned_frame = np.stack([x, aligned_frame[:, 1], z], axis=-1)
 
                 if tap is not None:
                     if not pose_found:
@@ -545,8 +627,15 @@ class SquatPipelineWorker(QThread):
                         joint_scores=joint_scores,
                         aligned_frame=aligned_frame,
                         view_mode=self.view_mode,
+                        common3d=common3d,
                     )
                 )
+
+                if video_frame_interval > 0.0:
+                    # 처리에 쓴 시간을 빼고 남은 만큼만 쉬어 원본 재생 속도를 맞춘다.
+                    lag = video_frame_interval - (time.perf_counter() - t_loop)
+                    if lag > 0:
+                        self.msleep(int(lag * 1000))
         except (PoseBackendError, RuntimeError, ValueError, OSError) as error:
             self.fatal_error.emit(str(error))
         except Exception as error:  # noqa: BLE001

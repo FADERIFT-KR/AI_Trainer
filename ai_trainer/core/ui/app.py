@@ -59,8 +59,11 @@ class GameWindow(QMainWindow):
         self.debug_window.raise_()
         self.debug_window.activateWindow()
 
-    def _start_compare(self, class_label: str, medoid_rank: int, camera_index: int) -> None:
-        self.compare_screen.start(class_label, medoid_rank, camera_index)
+    def _start_compare(self, class_label: str, medoid_rank: int, camera_index: int,
+                       video_path: str = "", depth_source: str = "mediapipe",
+                       label_archive: str = "") -> None:
+        self.compare_screen.start(class_label, medoid_rank, camera_index,
+                                  video_path, depth_source, label_archive)
         self.stack.setCurrentWidget(self.compare_screen)
 
     def _back_to_selection(self) -> None:

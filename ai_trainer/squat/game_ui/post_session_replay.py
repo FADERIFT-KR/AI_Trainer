@@ -104,8 +104,14 @@ def build_replay_views(recording_directory: str | Path, repetitions: Iterable[di
     """Create replay plans from the temporary recording and final UI decisions."""
     directory = Path(recording_directory)
     final_reps = list(repetitions)
+    # 고정 목록(front/left/right) 대신 실제로 녹화된 시점 파일을 읽는다 — AI Hub
+    # 원천데이터 검증에서는 'oblique'(사선)처럼 그 목록에 없는 시점도 기록된다.
+    recorded_views = [path.stem for path in sorted(directory.glob("*.json"))
+                      if path.stem != "session"]
+    ordered_views = ([v for v in VIEWS if v in recorded_views]
+                     + [v for v in recorded_views if v not in VIEWS])
     loaded: dict[str, tuple[dict, list[dict]]] = {}
-    for view in VIEWS:
+    for view in ordered_views:
         metadata_path = directory / f"{view}.json"
         if not metadata_path.is_file():
             continue
@@ -119,7 +125,7 @@ def build_replay_views(recording_directory: str | Path, repetitions: Iterable[di
         {view: float(item[0]["video_fps"]) for view, item in loaded.items()},
     )
     replay_views: list[ReplayView] = []
-    for view in VIEWS:
+    for view in ordered_views:
         if view not in loaded:
             continue
         metadata, rows = loaded[view]
@@ -146,16 +152,17 @@ def build_replay_views(recording_directory: str | Path, repetitions: Iterable[di
             label = str(rep.get("display_class") or rep.get("sequence_class") or "자세 오류")
             message = str(rep.get("fail_reason") or "최종 판정에서 오류로 확인된 부위")
             spans.append(ReplaySpan(start_frame, end_frame, label, error_joints(label, paper), message))
-        if spans:
-            replay_views.append(ReplayView(
-                view=view,
-                video_path=directory / metadata["video_file"],
-                rows=tuple(rows),
-                fps=float(metadata["video_fps"]),
-                spans=tuple(spans),
-                fused_frames=fusion.frame_poses.get(view, ()),
-                fusion_sources=fusion.frame_sources.get(view, ()),
-            ))
+        # 오류 구간이 없는 시점도 포함한다 — 세션이 끝나면 찍힌 영상 전체를 다시 볼 수
+        # 있어야 하고, spans가 비면 빨간 표시만 없을 뿐 재생은 똑같이 된다.
+        replay_views.append(ReplayView(
+            view=view,
+            video_path=directory / metadata["video_file"],
+            rows=tuple(rows),
+            fps=float(metadata["video_fps"]),
+            spans=tuple(spans),
+            fused_frames=fusion.frame_poses.get(view, ()),
+            fusion_sources=fusion.frame_sources.get(view, ()),
+        ))
     return replay_views
 
 
@@ -251,8 +258,16 @@ def render_fused_skeleton_frame(
     return canvas
 
 
+# AI Hub 검증에서 쓰는 시점 이름(사선 등)은 VIEW_LABEL_KO에 없다.
+_EXTRA_VIEW_LABEL_KO = {"oblique": "사선", "side": "측면"}
+
+
+def view_label_ko(view: str) -> str:
+    return VIEW_LABEL_KO.get(view) or _EXTRA_VIEW_LABEL_KO.get(view, view)
+
+
 def view_title(view: str) -> str:
-    return f"{VIEW_LABEL_KO[view]} 오류 동작 재생"
+    return f"{view_label_ko(view)} 전체 영상 재생"
 
 
 __all__ = [

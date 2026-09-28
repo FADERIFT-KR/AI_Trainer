@@ -18,6 +18,7 @@ from typing import Any
 import numpy as np
 
 from ai_trainer.squat.camera_views import VIEWS
+from ai_trainer.squat.metric_check import VIEW_CAMERAS as METRIC_VIEWS
 
 
 def json_safe(value: Any) -> Any:
@@ -42,7 +43,9 @@ class ViewRecorder:
 
     def __init__(self, directory: str | Path, view: str, cv2_module: Any,
                  camera_index: int, calibration_applied: bool = False):
-        if view not in VIEWS:
+        # 촬영 시점 이름은 파일명이 된다. 실측 검증(AI Hub 원천데이터)에서는 'oblique'
+        # 처럼 판정용 VIEWS에 없는 각도도 기록해야 하므로 그쪽 이름도 함께 허용한다.
+        if view not in VIEWS and view not in METRIC_VIEWS:
             raise ValueError(f"Unsupported view: {view}")
         self.directory = Path(directory)
         self.directory.mkdir(parents=True, exist_ok=True)
