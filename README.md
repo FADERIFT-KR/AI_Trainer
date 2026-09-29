@@ -144,7 +144,7 @@ python scripts/build_reference_db.py
 python scripts/run_offline_dtw_eval.py
 ```
 
-전체 361개 시퀀스에서 jerk RMS 90.9%, 뼈 길이 변동계수 65.3%가 감소했고, 최저점 이동은 평균 0.5 frame, 무릎각 RMS 변화는 0.87°였습니다. 문헌 근거, 과평활 방지 지표와 상세 수치는 [`docs/skeleton_refinement.md`](docs/skeleton_refinement.md)를 참고하세요. Reference medoid는 train actor에서만 선택하며 validation actor와의 교집합을 평가 전에 검사합니다.
+전체 361개 시퀀스에서 jerk RMS 90.9%, 뼈 길이 변동계수 65.3%가 감소했고, 최저점 이동은 평균 0.5 frame, 무릎각 RMS 변화는 0.87°였습니다. 문헌 근거, 과평활 방지 지표와 상세 수치는 [`context_engineering/2026-09/2026-09-20_skeleton_refinement.md`](context_engineering/2026-09/2026-09-20_skeleton_refinement.md)를 참고하세요. Reference medoid는 train actor에서만 선택하며 validation actor와의 교집합을 평가 전에 검사합니다.
 
 ## Offline / Online Weighted DTW 평가
 
@@ -156,13 +156,13 @@ python scripts/test_online_dtw.py
 ## 참고 문서
 
 - 전체 아키텍처와 데이터 분석 결과: [`.claude/claude.md`](.claude/claude.md)
-- Offline DTW 설계 결정: [`docs/offline_dtw_baseline.md`](docs/offline_dtw_baseline.md)
-- 후속 검증 TODO: [`docs/online_dtw_todo.md`](docs/online_dtw_todo.md)
+- Offline DTW 설계 결정: [`context_engineering/2026-08/2026-08-19_offline_dtw_baseline.md`](context_engineering/2026-08/2026-08-19_offline_dtw_baseline.md)
+- 후속 검증 TODO: [`context_engineering/2026-08/2026-08-19_online_dtw_todo.md`](context_engineering/2026-08/2026-08-19_online_dtw_todo.md)
 
 # Two-stage squat diagnosis
 
 To build the normal 3D DTW template, calibrate its pass threshold, and train the
 multi-task graph error diagnoser, run `python scripts/train_two_stage_squat.py`.
 The game uses the generated artifacts automatically. See
-[`docs/two_stage_squat.md`](docs/two_stage_squat.md) for evaluation limits and
+[`context_engineering/2026-09/2026-09-20_two_stage_squat.md`](context_engineering/2026-09/2026-09-20_two_stage_squat.md) for evaluation limits and
 the weak body-part labels.
