@@ -12,12 +12,13 @@ FEATURE_NAMES = (
     "torso_inclination",
     "heel_lift",
     "pelvis_height",
+    "trunk_shin_offset",
 )
 
 ERROR_FEATURES = {
     "발뒤꿈치오류": ("ankle_angle", "heel_lift"),
     "엉덩이하방오류": ("knee_angle", "hip_angle", "pelvis_height"),
-    "고관절오류": ("torso_inclination", "hip_angle"),
+    "고관절오류": ("torso_inclination", "hip_angle", "trunk_shin_offset"),
 }
 
 _IDX = {name: index for index, name in enumerate(COMMON_JOINT_NAMES)}
@@ -65,5 +66,16 @@ def feature_vector(coords: torch.Tensor, phase_gate: torch.Tensor) -> torch.Tens
     ankle_y = (coords[:, :, _IDX["LAnkle"], 1] + coords[:, :, _IDX["RAnkle"], 1]) / 2.0
     pelvis_height = -ankle_y
 
-    values = [ankle, knee, hip, torso_angle, heel, pelvis_height]
+    # Use the body-aligned sagittal plane. The relative trunk/shin lean
+    # captures an upright torso with forward-leaning shins relative to a
+    # proportionate squat without imposing a fixed angle cutoff.
+    def sagittal_lean(vector: torch.Tensor) -> torch.Tensor:
+        return torch.atan2(vector[..., 2].abs(), vector[..., 1].abs() + 1e-7) / torch.pi
+
+    shin_left = coords[:, :, _IDX["LKnee"]] - coords[:, :, _IDX["LAnkle"]]
+    shin_right = coords[:, :, _IDX["RKnee"]] - coords[:, :, _IDX["RAnkle"]]
+    shin_lean = (sagittal_lean(shin_left) + sagittal_lean(shin_right)) / 2.0
+    trunk_shin_offset = sagittal_lean(torso) - shin_lean
+
+    values = [ankle, knee, hip, torso_angle, heel, pelvis_height, trunk_shin_offset]
     return torch.stack([_weighted_mean(value, phase_gate) for value in values], dim=-1)

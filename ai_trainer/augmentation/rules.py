@@ -84,6 +84,8 @@ class RuleProfile:
 
     @classmethod
     def from_dict(cls, payload: dict) -> "RuleProfile":
+        if tuple(payload.get("feature_names", ())) != FEATURE_NAMES:
+            raise ValueError("rule profile feature schema changed; retrain the checkpoint")
         return cls(
             {key: np.asarray(value, dtype=np.float32) for key, value in payload["means"].items()},
             {key: np.asarray(value, dtype=np.float32) for key, value in payload["scales"].items()},

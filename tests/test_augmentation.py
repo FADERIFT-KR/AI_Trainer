@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 import torch
 
 from ai_trainer.augmentation.constraints import total_constraint_loss
+from ai_trainer.augmentation.biomechanics import ERROR_FEATURES, FEATURE_NAMES, feature_vector
 from ai_trainer.augmentation.model import ConditionalErrorGenerator
 from ai_trainer.augmentation.preprocessing import denormalize_sequence, normalize_sequence
 from ai_trainer.augmentation.projection import orthographic_project
+from ai_trainer.augmentation.rules import RuleProfile
 from ai_trainer.augmentation.schema import ALL_LABELS, SequenceMetadata, SequenceRecord
 from ai_trainer.augmentation.training import TrainingConfig, train_all
 from ai_trainer.core.s3_mapping.common_skeleton import COMMON_JOINT_NAMES
@@ -71,6 +74,26 @@ def test_projection_shape() -> None:
     projected = orthographic_project(normalized, yaw_degrees=30)
     assert projected.shape == (64, 18, 2)
     assert np.isfinite(projected).all()
+
+
+def test_hip_error_profile_uses_trunk_shin_offset() -> None:
+    assert "trunk_shin_offset" in ERROR_FEATURES["고관절오류"]
+    index = {name: i for i, name in enumerate(COMMON_JOINT_NAMES)}
+    normal = _sequence()
+    normal[:, index["Neck"], 2] += 0.2
+    hip_error = _sequence()
+    hip_error[:, index["LKnee"], 2] += 0.2
+    hip_error[:, index["RKnee"], 2] += 0.2
+    gate = torch.ones(1, len(normal))
+    normal_features = feature_vector(torch.tensor(normal[None], dtype=torch.float32), gate)
+    error_features = feature_vector(torch.tensor(hip_error[None], dtype=torch.float32), gate)
+    feature_index = FEATURE_NAMES.index("trunk_shin_offset")
+    assert error_features[0, feature_index] < normal_features[0, feature_index]
+
+
+def test_old_rule_profile_requires_retraining() -> None:
+    with pytest.raises(ValueError, match="retrain"):
+        RuleProfile.from_dict({"feature_names": list(FEATURE_NAMES[:-1])})
 
 
 def test_one_epoch_training_smoke(tmp_path) -> None:
