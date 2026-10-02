@@ -33,3 +33,6 @@ configs/local_camera_calibration.json
 *.part[0-9]*
 *.avi
 *.mp4
+
+# Claude Code 개인 설정
+.claude/settings.local.json
